@@ -6,3 +6,4 @@ export * from './UserBrandVotes';
 export * from './Category';
 export * from './UserDailyActions';
 export * from './NotificationQueue';
+export * from './AirdropScore';

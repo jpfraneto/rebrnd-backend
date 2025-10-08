@@ -46,6 +46,9 @@ export const getConfig = () => ({
     apiKey: process.env.NEYNAR_API_KEY,
     signerUuid: process.env.NEYNAR_SIGNER_UUID,
   },
+  blockchain: {
+    baseRpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+  },
   notifications: {
     enabled: process.env.NOTIFICATIONS_ENABLED !== 'false',
     baseUrl: process.env.NOTIFICATION_BASE_URL || 'https://brnd.land',

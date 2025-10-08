@@ -16,6 +16,7 @@ import {
   BrandTags,
   UserDailyActions,
   NotificationQueue,
+  AirdropScore,
 } from './models';
 
 @Module({
@@ -37,6 +38,7 @@ import {
         BrandTags,
         UserDailyActions,
         NotificationQueue,
+        AirdropScore,
       ],
       // Important: Set synchronize to false in production for safety
       synchronize: true,

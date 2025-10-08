@@ -6,6 +6,7 @@ import { VoteModule } from './vote/vote.module';
 import { NotificationModule } from './notification/notification.module';
 import { EmbedsModule } from './embeds/embeds.module';
 import { AdminModule } from './admin/admin.module';
+import { AirdropModule } from './airdrop/airdrop.module';
 
 const CoreModules = [
   UserModule,
@@ -15,6 +16,7 @@ const CoreModules = [
   NotificationModule,
   EmbedsModule,
   AdminModule,
+  AirdropModule,
 ];
 
 export default CoreModules;
