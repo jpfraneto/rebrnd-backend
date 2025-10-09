@@ -208,8 +208,6 @@ export class AirdropService {
     details: {
       followingBrnd: boolean;
       followingFloc: boolean;
-      followingBrndTwitter: boolean;
-      followingFlocTwitter: boolean;
     };
   }> {
     try {
@@ -247,23 +245,14 @@ export class AirdropService {
       const followingBrnd = brndUser?.viewer_context?.following || false;
       const followingFloc = flocUser?.viewer_context?.following || false;
 
-      // TODO: Implement Twitter follow checks
-      const followingBrndTwitter = false;
-      const followingFlocTwitter = false;
-
       const details = {
         followingBrnd,
         followingFloc,
-        followingBrndTwitter,
-        followingFlocTwitter,
       };
 
-      const followedCount = [
-        followingBrnd,
-        followingFloc,
-        followingBrndTwitter,
-        followingFlocTwitter,
-      ].filter(Boolean).length;
+      const followedCount = [followingBrnd, followingFloc].filter(
+        Boolean,
+      ).length;
 
       console.log(`📱 [FOLLOW ACCOUNTS] Follow status:`, details);
 
@@ -292,8 +281,6 @@ export class AirdropService {
         details: {
           followingBrnd: false,
           followingFloc: false,
-          followingBrndTwitter: false,
-          followingFlocTwitter: false,
         },
       };
     }
@@ -752,10 +739,7 @@ export class AirdropService {
 
       // Check if user has BRND token in their profile bio
       const profileBio = userInfo.profile?.bio?.text || '';
-      const hasBrndTokenInProfile =
-        profileBio.toLowerCase().includes('$brnd') ||
-        profileBio.toLowerCase().includes('brnd token') ||
-        profileBio.toLowerCase().includes('brnd');
+      const hasBrndTokenInProfile = false;
 
       console.log(`👑 [PRO USER] User Pro status:`, {
         pro: userInfo.pro,
@@ -834,9 +818,8 @@ export class AirdropService {
     const challenges: ChallengeBreakdown[] = [
       // Follow Accounts Challenge
       {
-        name: 'Seguir Cuentas',
-        description:
-          'Seguir a @brnd + @floc (y cuentas de Twitter @wearefloc @brnd_land)',
+        name: 'Follow Accounts',
+        description: 'Follow @brnd + @floc accounts',
         currentValue: followAccountsResult.followedCount,
         currentMultiplier: followAccountsResult.multiplier,
         maxMultiplier: 1.4,
@@ -862,8 +845,8 @@ export class AirdropService {
 
       // Channel Interaction Challenge
       {
-        name: 'Interacción con Canal /brnd',
-        description: 'Seguir canal + Publicar podium',
+        name: 'Channel Interaction /brnd',
+        description: 'Follow channel + Publish podiums',
         currentValue: channelInteractionResult.podiumCastsCount,
         currentMultiplier: channelInteractionResult.multiplier,
         maxMultiplier: 1.4,
@@ -894,7 +877,7 @@ export class AirdropService {
       // BRND Holdings Challenge
       {
         name: 'Holding $BRND',
-        description: 'Mantener tokens $BRND',
+        description: 'Hold $BRND',
         currentValue: holdingResult.totalBalance,
         currentMultiplier: holdingResult.multiplier,
         maxMultiplier: 1.8,
@@ -930,8 +913,8 @@ export class AirdropService {
 
       // Collectibles Challenge
       {
-        name: 'Coleccionar Collectibles Cast de BRND',
-        description: 'Coleccionar casts de BRND',
+        name: 'Collect @brndbot casts',
+        description: 'Collect @brndbot casts',
         currentValue: collectiblesResult.collectiblesCount,
         currentMultiplier: collectiblesResult.multiplier,
         maxMultiplier: 1.8,
@@ -962,8 +945,8 @@ export class AirdropService {
 
       // Voted Brands Challenge
       {
-        name: 'Haber Votado Marcas Distintas',
-        description: 'Votar marcas distintas',
+        name: '# of different brands voted',
+        description: 'Vote for different brands',
         currentValue: votedBrandsResult.votedBrandsCount,
         currentMultiplier: votedBrandsResult.multiplier,
         maxMultiplier: 1.8,
@@ -971,7 +954,7 @@ export class AirdropService {
         progress: {
           current: votedBrandsResult.votedBrandsCount,
           required: 72,
-          unit: 'marcas',
+          unit: 'brands',
         },
         tiers: [
           {
@@ -999,8 +982,8 @@ export class AirdropService {
 
       // Shared Podiums Challenge
       {
-        name: 'Haber Compartido Podiums',
-        description: 'Compartir podiums',
+        name: 'Podiums Shared',
+        description: 'Shared podiums',
         currentValue: sharedPodiumsResult.sharedPodiumsCount,
         currentMultiplier: sharedPodiumsResult.multiplier,
         maxMultiplier: 1.8,
@@ -1068,8 +1051,8 @@ export class AirdropService {
 
       // Pro User Challenge
       {
-        name: 'Ser Pro User + Token $BRND en Perfil',
-        description: 'Ser Pro User + Token $BRND en perfil',
+        name: 'Pro User',
+        description: 'Pro User',
         currentValue: proUserResult.isProUser
           ? proUserResult.hasBrndTokenInProfile
             ? 2
