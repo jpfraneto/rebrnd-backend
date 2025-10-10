@@ -32,6 +32,9 @@ export interface ChallengeBreakdown {
     multiplier: number;
     achieved: boolean;
   }[];
+  details?: {
+    [key: string]: any;
+  };
 }
 
 export interface AirdropCalculation {
@@ -841,6 +844,23 @@ export class AirdropService {
             achieved: followAccountsResult.followedCount >= 2,
           },
         ],
+        details: {
+          accounts: [
+            {
+              name: '@brnd',
+              fid: 1108951,
+              followed: followAccountsResult.details.followingBrnd,
+              required: true,
+            },
+            {
+              name: '@floc',
+              fid: 6946,
+              followed: followAccountsResult.details.followingFloc,
+              required: true,
+            },
+          ],
+          summary: `${followAccountsResult.followedCount}/2 accounts followed`,
+        },
       },
 
       // Channel Interaction Challenge
@@ -872,6 +892,19 @@ export class AirdropService {
               channelInteractionResult.isFollowingChannel,
           },
         ],
+        details: {
+          channelFollow: {
+            channel: '/brnd',
+            followed: channelInteractionResult.isFollowingChannel,
+            required: true,
+          },
+          podiumCasts: {
+            count: channelInteractionResult.podiumCastsCount,
+            required: 1,
+            description: 'Publish podium casts in /brnd channel',
+          },
+          summary: `Channel followed: ${channelInteractionResult.isFollowingChannel ? 'Yes' : 'No'}, Podiums published: ${channelInteractionResult.podiumCastsCount}`,
+        },
       },
 
       // BRND Holdings Challenge
@@ -909,6 +942,21 @@ export class AirdropService {
             achieved: holdingResult.totalBalance >= 800_000_000,
           },
         ],
+        details: {
+          totalBalance: holdingResult.totalBalance,
+          formattedBalance: holdingResult.totalBalance.toLocaleString(),
+          nextTier:
+            holdingResult.totalBalance >= 800_000_000
+              ? null
+              : holdingResult.totalBalance >= 400_000_000
+                ? { requirement: 800_000_000, multiplier: 1.8 }
+                : holdingResult.totalBalance >= 200_000_000
+                  ? { requirement: 400_000_000, multiplier: 1.6 }
+                  : holdingResult.totalBalance >= 100_000_000
+                    ? { requirement: 200_000_000, multiplier: 1.4 }
+                    : { requirement: 100_000_000, multiplier: 1.2 },
+          summary: `Holding ${holdingResult.totalBalance.toLocaleString()} BRND tokens`,
+        },
       },
 
       // Collectibles Challenge
@@ -978,6 +1026,20 @@ export class AirdropService {
             achieved: votedBrandsResult.votedBrandsCount >= 72,
           },
         ],
+        details: {
+          uniqueBrandsVoted: votedBrandsResult.votedBrandsCount,
+          nextTier:
+            votedBrandsResult.votedBrandsCount >= 72
+              ? null
+              : votedBrandsResult.votedBrandsCount >= 36
+                ? { requirement: 72, multiplier: 1.8 }
+                : votedBrandsResult.votedBrandsCount >= 18
+                  ? { requirement: 36, multiplier: 1.6 }
+                  : votedBrandsResult.votedBrandsCount >= 9
+                    ? { requirement: 18, multiplier: 1.4 }
+                    : { requirement: 9, multiplier: 1.2 },
+          summary: `Voted for ${votedBrandsResult.votedBrandsCount} unique brands`,
+        },
       },
 
       // Shared Podiums Challenge
@@ -1015,6 +1077,20 @@ export class AirdropService {
             achieved: sharedPodiumsResult.sharedPodiumsCount >= 80,
           },
         ],
+        details: {
+          sharedPodiumsCount: sharedPodiumsResult.sharedPodiumsCount,
+          nextTier:
+            sharedPodiumsResult.sharedPodiumsCount >= 80
+              ? null
+              : sharedPodiumsResult.sharedPodiumsCount >= 40
+                ? { requirement: 80, multiplier: 1.8 }
+                : sharedPodiumsResult.sharedPodiumsCount >= 20
+                  ? { requirement: 40, multiplier: 1.6 }
+                  : sharedPodiumsResult.sharedPodiumsCount >= 10
+                    ? { requirement: 20, multiplier: 1.4 }
+                    : { requirement: 10, multiplier: 1.2 },
+          summary: `Shared ${sharedPodiumsResult.sharedPodiumsCount} podiums with castHash`,
+        },
       },
 
       // Neynar Score Challenge
@@ -1047,6 +1123,19 @@ export class AirdropService {
             achieved: neynarScoreResult.neynarScore >= 1.0,
           },
         ],
+        details: {
+          neynarScore: neynarScoreResult.neynarScore,
+          hasPowerBadge: neynarScoreResult.hasPowerBadge,
+          nextTier:
+            neynarScoreResult.neynarScore >= 1.0
+              ? null
+              : neynarScoreResult.neynarScore >= 0.9
+                ? { requirement: 1.0, multiplier: 1.8 }
+                : neynarScoreResult.neynarScore >= 0.85
+                  ? { requirement: 0.9, multiplier: 1.5 }
+                  : { requirement: 0.85, multiplier: 1.2 },
+          summary: `Neynar score: ${neynarScoreResult.neynarScore} (Power badge: ${neynarScoreResult.hasPowerBadge ? 'Yes' : 'No'})`,
+        },
       },
 
       // Pro User Challenge
@@ -1084,6 +1173,17 @@ export class AirdropService {
               proUserResult.isProUser && proUserResult.hasBrndTokenInProfile,
           },
         ],
+        details: {
+          isProUser: proUserResult.isProUser,
+          hasBrndTokenInProfile: proUserResult.hasBrndTokenInProfile,
+          nextTier:
+            proUserResult.isProUser && proUserResult.hasBrndTokenInProfile
+              ? null
+              : proUserResult.isProUser
+                ? { requirement: 'BRND in profile', multiplier: 1.4 }
+                : { requirement: 'Pro User subscription', multiplier: 1.2 },
+          summary: `Pro User: ${proUserResult.isProUser ? 'Yes' : 'No'}, BRND in profile: ${proUserResult.hasBrndTokenInProfile ? 'Yes' : 'No'}`,
+        },
       },
     ];
 
