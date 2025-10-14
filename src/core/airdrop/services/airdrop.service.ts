@@ -122,10 +122,9 @@ export class AirdropService {
       `   ${userSystemPoints} (base points) × ${totalMultiplier} (total multiplier) = ${airdropScore}`,
     );
 
-    const percentage = 5;
-    const tokenAllocation = Math.round(
-      (percentage / 100) * this.TOTAL_ALLOCATION,
-    );
+    // Note: percentage and tokenAllocation will be calculated properly in bulk process
+    const percentage = 0; // Placeholder - will be updated in bulk calculation
+    const tokenAllocation = 0; // Placeholder - will be updated in bulk calculation
 
     // STEP 5: Calculate leaderboard position based on new airdrop score
     console.log(`🏅 [AIRDROP] STEP 5 - Calculating leaderboard position...`);
@@ -830,7 +829,7 @@ export class AirdropService {
         progress: {
           current: followAccountsResult.followedCount,
           required: 2,
-          unit: 'cuentas',
+          unit: 'following',
         },
         tiers: [
           {
@@ -1142,23 +1141,14 @@ export class AirdropService {
       {
         name: 'Pro User',
         description: 'Pro User',
-        currentValue: proUserResult.isProUser
-          ? proUserResult.hasBrndTokenInProfile
-            ? 2
-            : 1
-          : 0,
+        currentValue: proUserResult.isProUser ? 1 : 0,
         currentMultiplier: proUserResult.multiplier,
         maxMultiplier: 1.4,
-        completed:
-          proUserResult.isProUser && proUserResult.hasBrndTokenInProfile,
+        completed: proUserResult.isProUser,
         progress: {
-          current: proUserResult.isProUser
-            ? proUserResult.hasBrndTokenInProfile
-              ? 2
-              : 1
-            : 0,
-          required: 2,
-          unit: 'estado',
+          current: proUserResult.isProUser ? 1 : 0,
+          required: 1,
+          unit: 'is pro',
         },
         tiers: [
           {
@@ -1169,20 +1159,13 @@ export class AirdropService {
           {
             requirement: 2,
             multiplier: 1.4,
-            achieved:
-              proUserResult.isProUser && proUserResult.hasBrndTokenInProfile,
+            achieved: proUserResult.isProUser,
           },
         ],
         details: {
           isProUser: proUserResult.isProUser,
-          hasBrndTokenInProfile: proUserResult.hasBrndTokenInProfile,
-          nextTier:
-            proUserResult.isProUser && proUserResult.hasBrndTokenInProfile
-              ? null
-              : proUserResult.isProUser
-                ? { requirement: 'BRND in profile', multiplier: 1.4 }
-                : { requirement: 'Pro User subscription', multiplier: 1.2 },
-          summary: `Pro User: ${proUserResult.isProUser ? 'Yes' : 'No'}, BRND in profile: ${proUserResult.hasBrndTokenInProfile ? 'Yes' : 'No'}`,
+          nextTier: proUserResult.isProUser,
+          summary: `Pro User: ${proUserResult.isProUser ? 'Yes' : 'No'}`,
         },
       },
     ];
@@ -1352,5 +1335,587 @@ export class AirdropService {
       },
       take: limit,
     });
+  }
+
+  async getDatabaseSummary(): Promise<{
+    totalUsers: number;
+    usersWithVotes: number;
+    usersWithSharedPodiums: number;
+    totalVotes: number;
+    totalSharedPodiums: number;
+    averageVotesPerUser: number;
+    averageSharedPodiumsPerUser: number;
+    averageBrandsVotedPerUser: number;
+    existingAirdropScores: number;
+    topUsersByPoints: Array<{ fid: number; username: string; points: number }>;
+    topUsersByVotes: Array<{
+      fid: number;
+      username: string;
+      votesCount: number;
+    }>;
+    topUsersBySharedPodiums: Array<{
+      fid: number;
+      username: string;
+      sharedPodiumsCount: number;
+    }>;
+  }> {
+    console.log(`📊 [DATABASE SUMMARY] Generating database summary...`);
+
+    // Get total users
+    const totalUsers = await this.userRepository.count();
+    console.log(`👥 [DATABASE SUMMARY] Total users: ${totalUsers}`);
+
+    // Get users with votes
+    const usersWithVotes = await this.userRepository
+      .createQueryBuilder('user')
+      .innerJoin('user.userBrandVotes', 'votes')
+      .getCount();
+    console.log(`🗳️ [DATABASE SUMMARY] Users with votes: ${usersWithVotes}`);
+
+    // Get users with shared podiums
+    const usersWithSharedPodiums = await this.userRepository
+      .createQueryBuilder('user')
+      .innerJoin('user.userBrandVotes', 'votes')
+      .where('votes.shared = :shared', { shared: true })
+      .andWhere('votes.castHash IS NOT NULL')
+      .getCount();
+    console.log(
+      `📤 [DATABASE SUMMARY] Users with shared podiums: ${usersWithSharedPodiums}`,
+    );
+
+    // Get total votes count
+    const totalVotesResult = await this.userRepository.query(`
+      SELECT COUNT(*) as total FROM user_brand_votes
+    `);
+    const totalVotes = parseInt(totalVotesResult[0]?.total || '0');
+    console.log(`📊 [DATABASE SUMMARY] Total votes: ${totalVotes}`);
+
+    // Get total shared podiums count
+    const totalSharedPodiumsResult = await this.userRepository.query(`
+      SELECT COUNT(*) as total FROM user_brand_votes 
+      WHERE shared = true AND castHash IS NOT NULL
+    `);
+    const totalSharedPodiums = parseInt(
+      totalSharedPodiumsResult[0]?.total || '0',
+    );
+    console.log(
+      `📤 [DATABASE SUMMARY] Total shared podiums: ${totalSharedPodiums}`,
+    );
+
+    // Calculate averages
+    const averageVotesPerUser = totalUsers > 0 ? totalVotes / totalUsers : 0;
+    const averageSharedPodiumsPerUser =
+      totalUsers > 0 ? totalSharedPodiums / totalUsers : 0;
+
+    // Get average unique brands voted per user
+    const brandsVotedResult = await this.userRepository.query(`
+      SELECT AVG(unique_brands) as avg_brands FROM (
+        SELECT 
+          u.fid,
+          COUNT(DISTINCT 
+            CASE WHEN v.brand1Id IS NOT NULL THEN v.brand1Id END ||
+            CASE WHEN v.brand2Id IS NOT NULL THEN v.brand2Id END ||
+            CASE WHEN v.brand3Id IS NOT NULL THEN v.brand3Id END
+          ) as unique_brands
+        FROM users u
+        LEFT JOIN user_brand_votes v ON u.id = v.userId
+        GROUP BY u.fid
+      ) subquery
+    `);
+    const averageBrandsVotedPerUser = parseFloat(
+      brandsVotedResult[0]?.avg_brands || '0',
+    );
+
+    // Get existing airdrop scores count
+    const existingAirdropScores = await this.airdropScoreRepository.count();
+    console.log(
+      `🏆 [DATABASE SUMMARY] Existing airdrop scores: ${existingAirdropScores}`,
+    );
+
+    // Get top users by points
+    const topUsersByPoints = await this.userRepository.find({
+      select: ['fid', 'username', 'points'],
+      order: { points: 'DESC' },
+      take: 10,
+    });
+
+    // Get top users by votes count
+    const topUsersByVotesResult = await this.userRepository.query(`
+      SELECT u.fid, u.username, COUNT(v.id) as votesCount
+      FROM users u
+      LEFT JOIN user_brand_votes v ON u.id = v.userId
+      GROUP BY u.fid, u.username
+      ORDER BY votesCount DESC
+      LIMIT 10
+    `);
+    const topUsersByVotes = topUsersByVotesResult.map((row) => ({
+      fid: row.fid,
+      username: row.username,
+      votesCount: parseInt(row.votesCount),
+    }));
+
+    // Get top users by shared podiums
+    const topUsersBySharedPodiumsResult = await this.userRepository.query(`
+      SELECT u.fid, u.username, COUNT(v.id) as sharedPodiumsCount
+      FROM users u
+      LEFT JOIN user_brand_votes v ON u.id = v.userId
+      WHERE v.shared = true AND v.castHash IS NOT NULL
+      GROUP BY u.fid, u.username
+      ORDER BY sharedPodiumsCount DESC
+      LIMIT 10
+    `);
+    const topUsersBySharedPodiums = topUsersBySharedPodiumsResult.map(
+      (row) => ({
+        fid: row.fid,
+        username: row.username,
+        sharedPodiumsCount: parseInt(row.sharedPodiumsCount),
+      }),
+    );
+
+    const summary = {
+      totalUsers,
+      usersWithVotes,
+      usersWithSharedPodiums,
+      totalVotes,
+      totalSharedPodiums,
+      averageVotesPerUser: Math.round(averageVotesPerUser * 100) / 100,
+      averageSharedPodiumsPerUser:
+        Math.round(averageSharedPodiumsPerUser * 100) / 100,
+      averageBrandsVotedPerUser:
+        Math.round(averageBrandsVotedPerUser * 100) / 100,
+      existingAirdropScores,
+      topUsersByPoints: topUsersByPoints.map((user) => ({
+        fid: user.fid,
+        username: user.username,
+        points: user.points,
+      })),
+      topUsersByVotes,
+      topUsersBySharedPodiums,
+    };
+
+    console.log(`📋 [DATABASE SUMMARY] Summary generated:`, summary);
+    return summary;
+  }
+
+  async fixZeroScoreAllocations(): Promise<{ updatedUsers: number }> {
+    console.log(`🔧 [ZERO FIX] Fixing users with 0 airdrop score...`);
+
+    const result = await this.airdropScoreRepository
+      .createQueryBuilder()
+      .update()
+      .set({
+        tokenAllocation: 0,
+        percentage: 0,
+      })
+      .where('finalScore = 0 OR finalScore IS NULL')
+      .execute();
+
+    console.log(
+      `✅ [ZERO FIX] Fixed ${result.affected} users with zero scores`,
+    );
+
+    return { updatedUsers: result.affected || 0 };
+  }
+
+  async recalculateTokenDistribution(): Promise<{
+    totalUsers: number;
+    totalAirdropPoints: number;
+    totalTokensAllocated: number;
+    usersWithZeroScore: number;
+    distributionStats: {
+      under1USD: number;
+      under5USD: number;
+      under10USD: number;
+      under20USD: number;
+      over20USD: number;
+      over30USD: number;
+    };
+  }> {
+    console.log(
+      `🔄 [TOKEN RECALC] Starting token distribution recalculation...`,
+    );
+
+    // STEP 1: Fix zero score allocations first
+    await this.fixZeroScoreAllocations();
+
+    // STEP 2: Get all airdrop scores with valid values
+    const airdropScores = await this.airdropScoreRepository
+      .createQueryBuilder('score')
+      .select(['score.fid', 'score.finalScore'])
+      .where('score.finalScore > 0')
+      .getMany();
+
+    console.log(
+      `📊 [TOKEN RECALC] Found ${airdropScores.length} users with airdrop scores > 0`,
+    );
+
+    // Debug first few scores
+    console.log(
+      `🔍 [TOKEN RECALC] Sample scores:`,
+      airdropScores.slice(0, 5).map((s) => ({
+        fid: s.fid,
+        finalScore: s.finalScore,
+        type: typeof s.finalScore,
+        asNumber: Number(s.finalScore),
+      })),
+    );
+
+    const totalAirdropPoints = airdropScores.reduce(
+      (sum, score) => sum + Number(score.finalScore),
+      0,
+    );
+    console.log(
+      `📈 [TOKEN RECALC] Total airdrop points: ${totalAirdropPoints.toLocaleString()}`,
+    );
+
+    // Update token allocations for all users
+    let totalTokensAllocated = 0;
+    const BRND_USD_PRICE = 0.000001365;
+    const distributionStats = {
+      under1USD: 0,
+      under5USD: 0,
+      under10USD: 0,
+      under20USD: 0,
+      over20USD: 0,
+      over30USD: 0,
+    };
+
+    for (const score of airdropScores) {
+      const finalScore = Number(score.finalScore);
+      const percentage = (finalScore / totalAirdropPoints) * 100;
+      const tokenAllocation = Math.round(
+        (finalScore / totalAirdropPoints) * this.TOTAL_ALLOCATION,
+      );
+      const usdValue = tokenAllocation * BRND_USD_PRICE;
+
+      // Validate calculations
+      if (isNaN(percentage) || isNaN(tokenAllocation)) {
+        console.error(
+          `❌ [TOKEN RECALC] Invalid calculation for FID ${score.fid}:`,
+          {
+            finalScore,
+            totalAirdropPoints,
+            percentage,
+            tokenAllocation,
+          },
+        );
+        continue;
+      }
+
+      // Update database
+      await this.airdropScoreRepository.update(
+        { fid: score.fid },
+        {
+          tokenAllocation: tokenAllocation,
+          percentage: percentage,
+        },
+      );
+
+      totalTokensAllocated += tokenAllocation;
+
+      // Categorize by USD value
+      if (usdValue < 1) distributionStats.under1USD++;
+      else if (usdValue < 5) distributionStats.under5USD++;
+      else if (usdValue < 10) distributionStats.under10USD++;
+      else if (usdValue < 20) distributionStats.under20USD++;
+      else if (usdValue >= 30) distributionStats.over30USD++;
+      else distributionStats.over20USD++;
+    }
+
+    // Set zero allocation for users with 0 score - do this FIRST
+    console.log(
+      `🔄 [TOKEN RECALC] Setting zero allocation for users with 0 score...`,
+    );
+    await this.airdropScoreRepository
+      .createQueryBuilder()
+      .update()
+      .set({
+        tokenAllocation: 0,
+        percentage: 0,
+      })
+      .where('finalScore = 0')
+      .execute();
+
+    const usersWithZeroScore = await this.airdropScoreRepository
+      .createQueryBuilder('score')
+      .where('score.finalScore = 0')
+      .getCount();
+
+    console.log(`✅ [TOKEN RECALC] Recalculation complete!`);
+    console.log(
+      `💰 [TOKEN RECALC] Total tokens allocated: ${totalTokensAllocated.toLocaleString()}`,
+    );
+    console.log(
+      `📊 [TOKEN RECALC] Users with zero score: ${usersWithZeroScore}`,
+    );
+
+    return {
+      totalUsers: airdropScores.length,
+      totalAirdropPoints,
+      totalTokensAllocated,
+      usersWithZeroScore,
+      distributionStats,
+    };
+  }
+
+  async getAirdropAnalytics(): Promise<{
+    summary: any;
+    usdDistribution: any;
+    topUsers: any[];
+    bottomUsers: any[];
+    statistics: any;
+  }> {
+    console.log(`📊 [ANALYTICS] Generating airdrop analytics...`);
+
+    const BRND_USD_PRICE = 0.000001365;
+
+    // Get all airdrop scores with user info
+    const airdropScores = await this.airdropScoreRepository.find({
+      relations: ['user'],
+      order: { finalScore: 'DESC' },
+    });
+
+    // Calculate USD values and statistics
+    let totalTokens = 0;
+    let totalUSDValue = 0;
+    const usdDistribution = {
+      under1USD: 0,
+      between1_5USD: 0,
+      between5_10USD: 0,
+      between10_20USD: 0,
+      between20_30USD: 0,
+      over30USD: 0,
+    };
+
+    const usersWithUSD = airdropScores.map((score) => {
+      const tokenAllocation = Number(score.tokenAllocation);
+      const usdValue = tokenAllocation * BRND_USD_PRICE;
+      totalTokens += tokenAllocation;
+      totalUSDValue += usdValue;
+
+      // Categorize
+      if (usdValue < 1) usdDistribution.under1USD++;
+      else if (usdValue < 5) usdDistribution.between1_5USD++;
+      else if (usdValue < 10) usdDistribution.between5_10USD++;
+      else if (usdValue < 20) usdDistribution.between10_20USD++;
+      else if (usdValue < 30) usdDistribution.between20_30USD++;
+      else usdDistribution.over30USD++;
+
+      return {
+        ...score,
+        usdValue: Math.round(usdValue * 100) / 100,
+      };
+    });
+
+    const topUsers = usersWithUSD.slice(0, 20);
+    const bottomUsers = usersWithUSD.slice(-20).reverse();
+
+    const summary = {
+      totalUsers: airdropScores.length,
+      totalTokensDistributed: totalTokens,
+      totalUSDValue: Math.round(totalUSDValue * 100) / 100,
+      averageTokensPerUser: Math.round(totalTokens / airdropScores.length),
+      averageUSDPerUser:
+        Math.round((totalUSDValue / airdropScores.length) * 100) / 100,
+      brndUSDPrice: BRND_USD_PRICE,
+    };
+
+    const statistics = {
+      highestAllocation: {
+        tokens: Math.max(...usersWithUSD.map((u) => Number(u.tokenAllocation))),
+        usd: Math.max(...usersWithUSD.map((u) => u.usdValue)),
+      },
+      lowestAllocation: {
+        tokens: Math.min(
+          ...usersWithUSD
+            .filter((u) => Number(u.tokenAllocation) > 0)
+            .map((u) => Number(u.tokenAllocation)),
+        ),
+        usd: Math.min(
+          ...usersWithUSD.filter((u) => u.usdValue > 0).map((u) => u.usdValue),
+        ),
+      },
+    };
+
+    return {
+      summary,
+      usdDistribution,
+      topUsers,
+      bottomUsers,
+      statistics,
+    };
+  }
+
+  async calculateAirdropForAllUsers(batchSize: number = 10): Promise<{
+    databaseSummary: any;
+    eligibleUsers: number;
+    totalAirdropPoints: number;
+    totalTokensAllocated: number;
+    processed: number;
+    successful: number;
+    failed: number;
+    errors: Array<{ fid: number; error: string }>;
+    topAirdropScores: Array<{
+      fid: number;
+      username: string;
+      airdropScore: number;
+      tokenAllocation: number;
+      percentage: number;
+    }>;
+  }> {
+    console.log(
+      `🚀 [BULK AIRDROP] Starting airdrop calculation for TOP 1111 USERS by points`,
+    );
+
+    // STEP 1: Generate database summary first
+    console.log(`📊 [BULK AIRDROP] STEP 1: Generating database summary...`);
+    const databaseSummary = await this.getDatabaseSummary();
+    console.log(`✅ [BULK AIRDROP] Database summary completed`);
+
+    // STEP 2: Get top 1111 users by points
+    console.log(
+      `🏆 [BULK AIRDROP] STEP 2: Fetching top 1111 users by points...`,
+    );
+    const users = await this.userRepository.find({
+      select: ['fid', 'username', 'points'],
+      order: { points: 'DESC' },
+      take: this.TOP_USERS, // 1111
+    });
+
+    console.log(
+      `👑 [BULK AIRDROP] Found ${users.length} eligible users for airdrop`,
+    );
+    console.log(
+      `📦 [BULK AIRDROP] STEP 3: Processing in batches of ${batchSize} users`,
+    );
+
+    let processed = 0;
+    let successful = 0;
+    let failed = 0;
+    const errors: Array<{ fid: number; error: string }> = [];
+    const airdropCalculations: Array<{
+      fid: number;
+      username: string;
+      airdropScore: number;
+    }> = [];
+
+    // STEP 4: Calculate airdrop scores for all eligible users
+    for (let i = 0; i < users.length; i += batchSize) {
+      const batch = users.slice(i, i + batchSize);
+      console.log(
+        `📦 [BULK AIRDROP] Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(users.length / batchSize)} (users ${i + 1}-${Math.min(i + batchSize, users.length)})`,
+      );
+
+      for (const user of batch) {
+        try {
+          console.log(
+            `🎯 [BULK AIRDROP] Processing user ${user.fid} (${user.username})`,
+          );
+          const calculation = await this.checkUserEligibility(user.fid);
+
+          airdropCalculations.push({
+            fid: user.fid,
+            username: user.username,
+            airdropScore: calculation.finalScore,
+          });
+
+          successful++;
+          console.log(
+            `✅ [BULK AIRDROP] Successfully processed user ${user.fid} - Airdrop Score: ${calculation.finalScore}`,
+          );
+        } catch (error) {
+          console.error(
+            `❌ [BULK AIRDROP] Failed to process user ${user.fid}:`,
+            error,
+          );
+          failed++;
+          errors.push({
+            fid: user.fid,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        processed++;
+      }
+
+      console.log(
+        `📊 [BULK AIRDROP] Batch complete. Progress: ${processed}/${users.length} (${Math.round((processed / users.length) * 100)}%)`,
+      );
+
+      // Add a small delay between batches to be nice to external APIs
+      if (i + batchSize < users.length) {
+        console.log(`⏳ [BULK AIRDROP] Waiting 2 seconds before next batch...`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+
+    console.log(`🏁 [BULK AIRDROP] Airdrop score calculation complete!`);
+    console.log(
+      `📈 [BULK AIRDROP] Summary: ${successful} successful, ${failed} failed out of ${processed} total users`,
+    );
+
+    // STEP 5: Calculate token distribution
+    console.log(`💰 [BULK AIRDROP] STEP 5: Calculating token distribution...`);
+
+    const totalAirdropPoints = airdropCalculations.reduce(
+      (sum, calc) => sum + calc.airdropScore,
+      0,
+    );
+    console.log(
+      `📊 [BULK AIRDROP] Total airdrop points across all users: ${totalAirdropPoints.toLocaleString()}`,
+    );
+
+    // Update each user's airdrop score with proper token allocation
+    const updatedCalculations = [];
+    let totalTokensAllocated = 0;
+
+    for (const calc of airdropCalculations) {
+      const percentage = (calc.airdropScore / totalAirdropPoints) * 100;
+      const tokenAllocation = Math.round(
+        (calc.airdropScore / totalAirdropPoints) * this.TOTAL_ALLOCATION,
+      );
+      totalTokensAllocated += tokenAllocation;
+
+      // Update the database with the correct token allocation and percentage
+      await this.airdropScoreRepository.update(
+        { fid: calc.fid },
+        {
+          tokenAllocation: tokenAllocation,
+          percentage: percentage,
+        },
+      );
+
+      updatedCalculations.push({
+        fid: calc.fid,
+        username: calc.username,
+        airdropScore: calc.airdropScore,
+        tokenAllocation: tokenAllocation,
+        percentage: Math.round(percentage * 1000) / 1000, // Round to 3 decimal places
+      });
+    }
+
+    // Sort by airdrop score descending for top list
+    const topAirdropScores = updatedCalculations
+      .sort((a, b) => b.airdropScore - a.airdropScore)
+      .slice(0, 20); // Top 20 for summary
+
+    console.log(`💰 [BULK AIRDROP] Token distribution complete!`);
+    console.log(
+      `🎯 [BULK AIRDROP] Total tokens allocated: ${totalTokensAllocated.toLocaleString()} / ${this.TOTAL_ALLOCATION.toLocaleString()}`,
+    );
+    console.log(
+      `📊 [BULK AIRDROP] Top airdrop scorer: ${topAirdropScores[0]?.username} with ${topAirdropScores[0]?.airdropScore.toLocaleString()} points (${topAirdropScores[0]?.tokenAllocation.toLocaleString()} tokens)`,
+    );
+
+    return {
+      databaseSummary,
+      eligibleUsers: users.length,
+      totalAirdropPoints,
+      totalTokensAllocated,
+      processed,
+      successful,
+      failed,
+      errors,
+      topAirdropScores,
+    };
   }
 }
