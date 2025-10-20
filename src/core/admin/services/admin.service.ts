@@ -74,7 +74,7 @@ export class AdminService {
     const deploymentTime = new Date('2025-06-20T18:00:00.000Z');
 
     // Find the first Friday 18:00 UTC after deployment (same as BrandService logic)
-    let cycleStart = new Date(deploymentTime);
+    const cycleStart = new Date(deploymentTime);
     while (cycleStart.getUTCDay() !== 5 || cycleStart.getUTCHours() !== 18) {
       cycleStart.setTime(cycleStart.getTime() + 60 * 60 * 1000); // Add 1 hour
     }

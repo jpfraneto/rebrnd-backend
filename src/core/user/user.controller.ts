@@ -292,4 +292,80 @@ export class UserController {
       );
     }
   }
+
+  /**
+   * Gets consolidated user profile data including leaderboard position,
+   * points, streak, podiums, favorite brand, and voting statistics.
+   */
+  @Get('/profile')
+  @UseGuards(AuthorizationGuard)
+  async getUserProfile(
+    @Session() session: QuickAuthPayload,
+    @Res() res: Response,
+  ): Promise<Response> {
+    try {
+      console.log(
+        `👤 [UserController] Getting profile for user FID: ${session.sub}`,
+      );
+
+      const profile = await this.userService.getUserProfile(session.sub);
+
+      return hasResponse(res, profile);
+    } catch (error) {
+      console.error('❌ [UserController] Error getting user profile:', error);
+
+      if (error.message === 'User not found') {
+        return hasError(
+          res,
+          HttpStatus.NOT_FOUND,
+          'getUserProfile',
+          'User not found. Please refresh the app.',
+        );
+      }
+
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'getUserProfile',
+        'Failed to retrieve user profile',
+      );
+    }
+  }
+
+  /**
+   * Backfills calculated profile fields for all existing users (ADMIN ONLY).
+   * This is a one-time operation to populate the new profile fields.
+   */
+  // TODO: ACTIVATE THIS WITH THE PROD DATA
+
+  // @Get('/dev/backfill-profile-data')
+  // async backfillProfileData(@Res() res: Response): Promise<Response> {
+  //   try {
+  //     console.log(
+  //       `🔄 [UserController] Admin starting profile data backfill...`,
+  //     );
+
+  //     await this.userService.backfillAllUserCalculatedFields();
+
+  //     console.log(
+  //       `✅ [UserController] Profile data backfill completed successfully`,
+  //     );
+
+  //     return hasResponse(res, {
+  //       message: 'Profile data backfill completed successfully',
+  //       timestamp: new Date().toISOString(),
+  //     });
+  //   } catch (error) {
+  //     console.error(
+  //       '❌ [UserController] Error during profile data backfill:',
+  //       error,
+  //     );
+  //     return hasError(
+  //       res,
+  //       HttpStatus.INTERNAL_SERVER_ERROR,
+  //       'backfillProfileData',
+  //       `Backfill failed: ${error.message}`,
+  //     );
+  //   }
+  // }
 }

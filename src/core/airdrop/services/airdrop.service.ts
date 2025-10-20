@@ -81,7 +81,7 @@ export class AirdropService {
     });
 
     // Check if user already has an airdrop score
-    let existingAirdropScore = await this.airdropScoreRepository.findOne({
+    const existingAirdropScore = await this.airdropScoreRepository.findOne({
       where: { fid },
       relations: ['user'],
     });
@@ -418,6 +418,8 @@ export class AirdropService {
   private async calculateHoldingMultiplier(fid: number): Promise<{
     multiplier: number;
     totalBalance: number;
+    walletBalance: number;
+    stakedBalance: number;
   }> {
     try {
       console.log(`💰 [BRND HOLDINGS] Checking token holdings for FID: ${fid}`);
@@ -428,7 +430,12 @@ export class AirdropService {
         console.log(
           `❌ [BRND HOLDINGS] No verified ETH addresses found for FID: ${fid}`,
         );
-        return { multiplier: 1.0, totalBalance: 0 };
+        return {
+          multiplier: 1.0,
+          totalBalance: 0,
+          walletBalance: 0,
+          stakedBalance: 0,
+        };
       }
 
       const ethAddresses = userInfo.verified_addresses.eth_addresses;
@@ -437,19 +444,35 @@ export class AirdropService {
         ethAddresses,
       );
 
-      // Check BRND balance for each address
-      const balancePromises = ethAddresses.map((address) =>
-        this.getBrndBalance(address),
-      );
-      const balances = await Promise.all(balancePromises);
+      // Check BRND wallet balance and staked balance for each address in parallel
+      const balancePromises = ethAddresses.map(async (address) => {
+        const [walletBalance, stakedBalance] = await Promise.all([
+          this.getBrndBalance(address),
+          this.getStakedBrndBalance(address),
+        ]);
+        return { walletBalance, stakedBalance };
+      });
 
-      // Sum all balances
-      const totalBalance = balances.reduce((sum, balance) => sum + balance, 0);
-      console.log(
-        `💰 [BRND HOLDINGS] Total BRND balance: ${totalBalance.toLocaleString()}`,
-      );
+      const addressBalances = await Promise.all(balancePromises);
 
-      // Apply multiplier based on holdings according to spec
+      // Sum all wallet and staked balances
+      const totalWalletBalance = addressBalances.reduce(
+        (sum, balance) => sum + balance.walletBalance,
+        0,
+      );
+      const totalStakedBalance = addressBalances.reduce(
+        (sum, balance) => sum + balance.stakedBalance,
+        0,
+      );
+      const totalBalance = totalWalletBalance + totalStakedBalance;
+
+      console.log(`💰 [BRND HOLDINGS] Balance breakdown:`, {
+        walletBalance: totalWalletBalance.toLocaleString(),
+        stakedBalance: totalStakedBalance.toLocaleString(),
+        totalBalance: totalBalance.toLocaleString(),
+      });
+
+      // Apply multiplier based on total holdings (wallet + staked) according to spec
       let multiplier = 1.0;
       let tier = 'No holdings';
 
@@ -469,15 +492,27 @@ export class AirdropService {
 
       console.log(`💰 [BRND HOLDINGS] Multiplier calculation:`, {
         totalBalance: totalBalance.toLocaleString(),
+        walletBalance: totalWalletBalance.toLocaleString(),
+        stakedBalance: totalStakedBalance.toLocaleString(),
         multiplier,
         tier,
-        logic: `Holding ${totalBalance.toLocaleString()} BRND tokens`,
+        logic: `Holding ${totalBalance.toLocaleString()} BRND tokens (${totalWalletBalance.toLocaleString()} wallet + ${totalStakedBalance.toLocaleString()} staked)`,
       });
 
-      return { multiplier, totalBalance };
+      return {
+        multiplier,
+        totalBalance,
+        walletBalance: totalWalletBalance,
+        stakedBalance: totalStakedBalance,
+      };
     } catch (error) {
       console.error('Error calculating holdings multiplier:', error);
-      return { multiplier: 1.0, totalBalance: 0 };
+      return {
+        multiplier: 1.0,
+        totalBalance: 0,
+        walletBalance: 0,
+        stakedBalance: 0,
+      };
     }
   }
 
@@ -536,6 +571,112 @@ export class AirdropService {
       return balance;
     } catch (error) {
       console.error(`Error getting BRND balance for ${address}:`, error);
+      return 0;
+    }
+  }
+
+  private async getStakedBrndBalance(address: string): Promise<number> {
+    try {
+      console.log(
+        `🥩 [STAKING] Checking staked BRND balance for address: ${address}`,
+      );
+
+      const TELLER_VAULT = '0x19d1872d8328b23a219e11d3d6eeee1954a88f88';
+      const appConfig = getConfig();
+      const BASE_RPC_URL = appConfig.blockchain.baseRpcUrl;
+
+      // Step 1: Get vault shares balance (balanceOf on vault contract)
+      const functionSelector = '0x70a08231'; // balanceOf(address)
+      const paddedAddress = address.slice(2).padStart(64, '0'); // Remove 0x and pad to 64 chars
+      const sharesData = functionSelector + paddedAddress;
+
+      const sharesResponse = await fetch(BASE_RPC_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'eth_call',
+          params: [
+            {
+              to: TELLER_VAULT,
+              data: sharesData,
+            },
+            'latest',
+          ],
+          id: 1,
+        }),
+      });
+
+      if (!sharesResponse.ok) {
+        throw new Error(
+          `RPC error: ${sharesResponse.status} ${sharesResponse.statusText}`,
+        );
+      }
+
+      const sharesResult = await sharesResponse.json();
+
+      if (sharesResult.error) {
+        throw new Error(`RPC call error: ${sharesResult.error.message}`);
+      }
+
+      const sharesHex = sharesResult.result;
+      const sharesBigInt = BigInt(sharesHex);
+
+      // If no shares, return 0
+      if (sharesBigInt === 0n) {
+        console.log(`🥩 [STAKING] Address ${address} has no vault shares`);
+        return 0;
+      }
+
+      // Step 2: Convert shares to assets using convertToAssets
+      const convertToAssetsSelector = '0x07a2d13a'; // convertToAssets(uint256)
+      const paddedShares = sharesHex.slice(2).padStart(64, '0'); // Remove 0x and pad to 64 chars
+      const convertData = convertToAssetsSelector + paddedShares;
+
+      const assetsResponse = await fetch(BASE_RPC_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'eth_call',
+          params: [
+            {
+              to: TELLER_VAULT,
+              data: convertData,
+            },
+            'latest',
+          ],
+          id: 2,
+        }),
+      });
+
+      if (!assetsResponse.ok) {
+        throw new Error(
+          `RPC error: ${assetsResponse.status} ${assetsResponse.statusText}`,
+        );
+      }
+
+      const assetsResult = await assetsResponse.json();
+
+      if (assetsResult.error) {
+        throw new Error(`RPC call error: ${assetsResult.error.message}`);
+      }
+
+      // Convert hex result to number (BRND has 18 decimals)
+      const assetsHex = assetsResult.result;
+      const assetsBigInt = BigInt(assetsHex);
+      const stakedBalance = Number(assetsBigInt) / Math.pow(10, 18);
+
+      console.log(
+        `🥩 [STAKING] Address ${address} staked BRND balance: ${stakedBalance.toLocaleString()}`,
+      );
+      return stakedBalance;
+    } catch (error) {
+      console.error(`Error getting staked BRND balance for ${address}:`, error);
       return 0;
     }
   }
@@ -943,7 +1084,11 @@ export class AirdropService {
         ],
         details: {
           totalBalance: holdingResult.totalBalance,
+          walletBalance: holdingResult.walletBalance,
+          stakedBalance: holdingResult.stakedBalance,
           formattedBalance: holdingResult.totalBalance.toLocaleString(),
+          formattedWalletBalance: holdingResult.walletBalance.toLocaleString(),
+          formattedStakedBalance: holdingResult.stakedBalance.toLocaleString(),
           nextTier:
             holdingResult.totalBalance >= 800_000_000
               ? null
@@ -954,7 +1099,7 @@ export class AirdropService {
                   : holdingResult.totalBalance >= 100_000_000
                     ? { requirement: 200_000_000, multiplier: 1.4 }
                     : { requirement: 100_000_000, multiplier: 1.2 },
-          summary: `Holding ${holdingResult.totalBalance.toLocaleString()} BRND tokens`,
+          summary: `Holding ${holdingResult.totalBalance.toLocaleString()} BRND tokens (${holdingResult.walletBalance.toLocaleString()} wallet + ${holdingResult.stakedBalance.toLocaleString()} staked)`,
         },
       },
 

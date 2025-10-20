@@ -267,7 +267,9 @@ export class AirdropController {
                     </tr>
                 </thead>
                 <tbody>
-                    ${analytics.topUsers.map((user, index) => `
+                    ${analytics.topUsers
+                      .map(
+                        (user, index) => `
                     <tr ${index < 3 ? 'class="highlight"' : ''}>
                         <td><strong>#${index + 1}</strong></td>
                         <td>${user.user?.username || 'Unknown'}</td>
@@ -277,7 +279,9 @@ export class AirdropController {
                         <td class="text-green"><strong>$${user.usdValue}</strong></td>
                         <td>${Number(user.percentage).toFixed(3)}%</td>
                     </tr>
-                    `).join('')}
+                    `,
+                      )
+                      .join('')}
                 </tbody>
             </table>
         </div>
@@ -295,7 +299,9 @@ export class AirdropController {
                     </tr>
                 </thead>
                 <tbody>
-                    ${analytics.bottomUsers.map(user => `
+                    ${analytics.bottomUsers
+                      .map(
+                        (user) => `
                     <tr>
                         <td>${user.user?.username || 'Unknown'}</td>
                         <td>${user.fid}</td>
@@ -303,7 +309,9 @@ export class AirdropController {
                         <td>${Number(user.tokenAllocation).toLocaleString()}</td>
                         <td class="text-blue">$${user.usdValue}</td>
                     </tr>
-                    `).join('')}
+                    `,
+                      )
+                      .join('')}
                 </tbody>
             </table>
         </div>
@@ -351,15 +359,21 @@ export class AirdropController {
   }
 
   @Get('calculate-all-users')
-  async calculateAllUsers(@Res() res: Response, @Query('batchSize') batchSize?: string) {
+  async calculateAllUsers(
+    @Res() res: Response,
+    @Query('batchSize') batchSize?: string,
+  ) {
     try {
       const batchSizeNum = batchSize ? parseInt(batchSize, 10) : 10;
       const maxBatchSize = 50;
       const actualBatchSize = Math.min(batchSizeNum, maxBatchSize);
 
-      console.log(`🚀 [CONTROLLER] Starting bulk airdrop calculation with batch size: ${actualBatchSize}`);
+      console.log(
+        `🚀 [CONTROLLER] Starting bulk airdrop calculation with batch size: ${actualBatchSize}`,
+      );
 
-      const result = await this.airdropService.calculateAirdropForAllUsers(actualBatchSize);
+      const result =
+        await this.airdropService.calculateAirdropForAllUsers(actualBatchSize);
 
       console.log(`✅ [CONTROLLER] Bulk calculation completed:`, result);
 

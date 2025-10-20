@@ -6,10 +6,7 @@ import { AirdropScore, User } from '../../models';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([AirdropScore, User]),
-    AuthModule,
-  ],
+  imports: [TypeOrmModule.forFeature([AirdropScore, User]), AuthModule],
   controllers: [AirdropController],
   providers: [AirdropService],
   exports: [AirdropService],

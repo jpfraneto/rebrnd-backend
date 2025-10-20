@@ -737,4 +737,287 @@ export class UserService {
     console.log('🗑️ [UserService] Invalidating leaderboard cache');
     this.leaderboardCache = null;
   }
+
+  /**
+   * Calculates daily voting streak for a user based on consecutive voting days
+   */
+  async calculateDailyStreak(userId: number): Promise<number> {
+    try {
+      const votes = await this.userBrandVotesRepository.find({
+        where: { user: { id: userId } },
+        order: { date: 'DESC' },
+        select: ['date'],
+      });
+
+      if (votes.length === 0) return 0;
+
+      let streak = 0;
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      // Check if user voted today or yesterday (streak can continue)
+      const mostRecentVote = new Date(votes[0].date);
+      const mostRecentVoteDate = new Date(
+        mostRecentVote.getFullYear(),
+        mostRecentVote.getMonth(),
+        mostRecentVote.getDate(),
+      );
+      const daysDiff = Math.floor(
+        (today.getTime() - mostRecentVoteDate.getTime()) /
+          (1000 * 60 * 60 * 24),
+      );
+
+      if (daysDiff > 1) {
+        return 0; // Streak broken
+      }
+
+      // Count consecutive days
+      const expectedDate = new Date(mostRecentVoteDate);
+      for (const vote of votes) {
+        const voteDate = new Date(vote.date);
+        const voteDateOnly = new Date(
+          voteDate.getFullYear(),
+          voteDate.getMonth(),
+          voteDate.getDate(),
+        );
+
+        if (voteDateOnly.getTime() === expectedDate.getTime()) {
+          streak++;
+          expectedDate.setDate(expectedDate.getDate() - 1);
+        } else {
+          break;
+        }
+      }
+
+      return streak;
+    } catch (error) {
+      logger.error('Error calculating daily streak:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Calculates total podiums (vote count) for a user
+   */
+  async calculateTotalPodiums(userId: number): Promise<number> {
+    try {
+      const count = await this.userBrandVotesRepository.count({
+        where: { user: { id: userId } },
+      });
+      return count;
+    } catch (error) {
+      logger.error('Error calculating total podiums:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Calculates unique brands count that user has voted for
+   */
+  async calculateVotedBrandsCount(userId: number): Promise<number> {
+    try {
+      const votes = await this.userBrandVotesRepository.find({
+        where: { user: { id: userId } },
+        relations: ['brand1', 'brand2', 'brand3'],
+      });
+
+      const uniqueBrandIds = new Set<number>();
+      votes.forEach((vote) => {
+        if (vote.brand1) uniqueBrandIds.add(vote.brand1.id);
+        if (vote.brand2) uniqueBrandIds.add(vote.brand2.id);
+        if (vote.brand3) uniqueBrandIds.add(vote.brand3.id);
+      });
+
+      return uniqueBrandIds.size;
+    } catch (error) {
+      logger.error('Error calculating voted brands count:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Calculates user's favorite brand based on voting frequency
+   */
+  async calculateFavoriteBrand(userId: number): Promise<Brand | null> {
+    try {
+      const votes = await this.userBrandVotesRepository.find({
+        where: { user: { id: userId } },
+        relations: ['brand1', 'brand2', 'brand3'],
+      });
+
+      if (votes.length === 0) return null;
+
+      const brandCounts = new Map<number, { brand: Brand; count: number }>();
+
+      votes.forEach((vote) => {
+        // Weight: 1st place = 3 points, 2nd place = 2 points, 3rd place = 1 point
+        if (vote.brand1) {
+          const existing = brandCounts.get(vote.brand1.id) || {
+            brand: vote.brand1,
+            count: 0,
+          };
+          brandCounts.set(vote.brand1.id, {
+            brand: vote.brand1,
+            count: existing.count + 3,
+          });
+        }
+        if (vote.brand2) {
+          const existing = brandCounts.get(vote.brand2.id) || {
+            brand: vote.brand2,
+            count: 0,
+          };
+          brandCounts.set(vote.brand2.id, {
+            brand: vote.brand2,
+            count: existing.count + 2,
+          });
+        }
+        if (vote.brand3) {
+          const existing = brandCounts.get(vote.brand3.id) || {
+            brand: vote.brand3,
+            count: 0,
+          };
+          brandCounts.set(vote.brand3.id, {
+            brand: vote.brand3,
+            count: existing.count + 1,
+          });
+        }
+      });
+
+      // Find brand with highest count
+      let favoriteBrand: Brand | null = null;
+      let maxCount = 0;
+
+      for (const [_, { brand, count }] of brandCounts) {
+        if (count > maxCount) {
+          maxCount = count;
+          favoriteBrand = brand;
+        }
+      }
+
+      return favoriteBrand;
+    } catch (error) {
+      logger.error('Error calculating favorite brand:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Updates calculated fields for a specific user
+   */
+  async updateUserCalculatedFields(userId: number): Promise<void> {
+    try {
+      const [dailyStreak, totalPodiums, votedBrandsCount, favoriteBrand] =
+        await Promise.all([
+          this.calculateDailyStreak(userId),
+          this.calculateTotalPodiums(userId),
+          this.calculateVotedBrandsCount(userId),
+          this.calculateFavoriteBrand(userId),
+        ]);
+
+      await this.userRepository.update(userId, {
+        dailyStreak,
+        totalPodiums,
+        votedBrandsCount,
+        favoriteBrand,
+      });
+
+      logger.log(`Updated calculated fields for user ${userId}`);
+    } catch (error) {
+      logger.error(
+        `Error updating calculated fields for user ${userId}:`,
+        error,
+      );
+    }
+  }
+
+  /**
+   * Backfills calculated fields for all existing users
+   * Use this method to populate the new fields for existing users
+   */
+  async backfillAllUserCalculatedFields(): Promise<void> {
+    try {
+      logger.log('Starting backfill of calculated fields for all users...');
+
+      const users = await this.userRepository.find({ select: ['id'] });
+      logger.log(`Found ${users.length} users to process`);
+
+      let processed = 0;
+      for (const user of users) {
+        await this.updateUserCalculatedFields(user.id);
+        processed++;
+
+        if (processed % 10 === 0) {
+          logger.log(`Processed ${processed}/${users.length} users`);
+        }
+      }
+
+      logger.log(`Backfill completed! Processed ${processed} users`);
+    } catch (error) {
+      logger.error('Error during backfill:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Gets consolidated user profile data for the frontend
+   */
+  async getUserProfile(fid: number): Promise<{
+    leaderboardPosition: number;
+    currentPoints: number;
+    dailyStreak: number;
+    totalPodiums: number;
+    favoriteBrand: {
+      name: string;
+      iconUrl: string;
+    } | null;
+    votedBrands: number;
+    neynarScore: number;
+  }> {
+    try {
+      // Get user by FID
+      const user = await this.userRepository.findOne({
+        where: { fid },
+        relations: ['favoriteBrand'],
+        select: [
+          'id',
+          'fid',
+          'points',
+          'dailyStreak',
+          'totalPodiums',
+          'votedBrandsCount',
+        ],
+      });
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Get leaderboard position
+      await this.refreshLeaderboardCacheIfNeeded();
+      const userIndex =
+        this.leaderboardCache?.users.findIndex((u) => u.fid === fid) ?? -1;
+      const leaderboardPosition = userIndex !== -1 ? userIndex + 1 : 0;
+
+      // Format favorite brand
+      const favoriteBrand = user.favoriteBrand
+        ? {
+            name: user.favoriteBrand.name,
+            iconUrl: user.favoriteBrand.imageUrl,
+          }
+        : null;
+
+      return {
+        leaderboardPosition,
+        currentPoints: user.points,
+        dailyStreak: user.dailyStreak,
+        totalPodiums: user.totalPodiums,
+        favoriteBrand,
+        votedBrands: user.votedBrandsCount,
+        neynarScore: 0.9, // Placeholder for now, as requested
+      };
+    } catch (error) {
+      logger.error('Error getting user profile:', error);
+      throw error;
+    }
+  }
 }

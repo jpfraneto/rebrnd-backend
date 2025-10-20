@@ -10,9 +10,11 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   OneToMany,
+  ManyToOne,
 } from 'typeorm';
 
 import { UserBrandVotes } from '../UserBrandVotes';
+import { Brand } from '../Brand';
 
 // Types
 import { UserRoleEnum } from './';
@@ -71,6 +73,26 @@ export class User {
     nullable: true,
   })
   lastVoteReminderSent: Date;
+
+  @Column({
+    default: 0,
+  })
+  dailyStreak: number;
+
+  @Column({
+    default: 0,
+  })
+  totalPodiums: number;
+
+  @Column({
+    default: 0,
+  })
+  votedBrandsCount: number;
+
+  @ManyToOne(() => Brand, {
+    nullable: true,
+  })
+  favoriteBrand: Brand;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -227,7 +227,7 @@ export class BrandService {
   private calculateWeeklyCycle(deploymentTime: Date, currentTime: Date) {
     // Convert deployment time to Santiago timezone for calculation
     // Find the first Friday 3pm after deployment
-    let cycleStart = new Date(deploymentTime);
+    const cycleStart = new Date(deploymentTime);
 
     // If deployment was exactly Friday 3pm, that's cycle 1 start
     // Otherwise, find next Friday 3pm
@@ -610,7 +610,7 @@ export class BrandService {
    * Get the first Friday at 3pm Chile time after deployment
    */
   private getFirstFriday(deploymentTime: Date): Date {
-    let friday = new Date(deploymentTime);
+    const friday = new Date(deploymentTime);
 
     // If deployment was exactly Friday 3pm Chile, that's the first Friday
     if (friday.getUTCDay() === 5 && friday.getUTCHours() === 18) {
@@ -1116,6 +1116,7 @@ export class BrandService {
       user.id,
       currentDate,
     );
+    console.log('TODAY VOTES', todayVotes);
 
     if (todayVotes !== undefined) {
       throw new Error('You have already voted today.');
@@ -1142,6 +1143,9 @@ export class BrandService {
     console.log('THE USER VOTED AND NOW IT IS GOING TO BE CASTED');
     const bot_cast_hash = await this.castUserVoteThroughMarloBot(savedVote);
 
+    // Update user's calculated fields after voting
+    await this.userService.updateUserCalculatedFields(user.id);
+
     await this.userService.addPoints(user.id, 3);
     await this.updateBrandScores(brandIds);
 
@@ -1152,6 +1156,9 @@ export class BrandService {
     savedVote: UserBrandVotes,
   ): Promise<string> {
     try {
+      if (!this.config.isProduction) {
+        return '0x25ea5a47c1c04db081b63493c369b8538c91543a';
+      }
       // Fetch the vote with all relations populated
       const voteWithRelations = await this.userBrandVotesRepository.findOne({
         where: { id: savedVote.id },
