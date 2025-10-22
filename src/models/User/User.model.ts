@@ -89,6 +89,11 @@ export class User {
   })
   votedBrandsCount: number;
 
+  @Column({
+    default: 0,
+  })
+  brndPowerLevel: number;
+
   @ManyToOne(() => Brand, {
     nullable: true,
   })
