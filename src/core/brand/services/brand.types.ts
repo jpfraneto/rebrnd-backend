@@ -10,8 +10,7 @@ export type BrandCast = {
   image?: string;
 };
 
-export type BrandResponse = {
+export type BrandResponse = Brand & {
   fanCount?: number;
-  brand: Brand;
-  casts: BrandCast[];
+  casts?: BrandCast[];
 };

@@ -1,3 +1,6 @@
 export { BlockchainService } from './blockchain.service';
 export { PowerLevelService } from './power-level.service';
 export { SignatureService } from './signature.service';
+export { RewardService } from './reward.service';
+export { CastVerificationService } from './cast-verification.service';
+export { ContractUploadService } from './contract-upload.service';

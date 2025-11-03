@@ -21,7 +21,6 @@ import {
   Category,
 } from '../../models';
 import { AuthModule } from '../auth/auth.module';
-import { AdminController } from '../admin/admin.controller';
 import { BrandSchedulerService } from './services/brand-scheduler.service';
 
 @Module({
@@ -36,7 +35,7 @@ import { BrandSchedulerService } from './services/brand-scheduler.service';
     ]),
     AuthModule,
   ],
-  controllers: [BrandController, AdminController],
+  controllers: [BrandController],
   providers: [
     BrandService,
     UserService,

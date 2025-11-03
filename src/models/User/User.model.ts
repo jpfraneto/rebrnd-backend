@@ -94,6 +94,16 @@ export class User {
   })
   brndPowerLevel: number;
 
+  @Column({
+    default: 0,
+  })
+  totalVotes: number;
+
+  @Column({
+    default: 0,
+  })
+  lastVoteDay: number;
+
   @ManyToOne(() => Brand, {
     nullable: true,
   })

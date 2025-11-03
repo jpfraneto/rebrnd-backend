@@ -764,10 +764,8 @@ export class BrandService {
       }
 
       return {
-        brand: {
-          ...brand,
-          currentRanking,
-        },
+        ...brand,
+        currentRanking,
         casts: info,
         fanCount: totalFans,
       };

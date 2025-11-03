@@ -10,6 +10,8 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+
+import { logger } from '../../main';
 import { ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
@@ -51,6 +53,130 @@ export class BrandController {
     @Param('id') id: Brand['id'],
   ): Promise<BrandResponse | undefined> {
     return this.brandService.getById(id, [], ['category']);
+  }
+
+  /**
+   * Retrieves enhanced brand information including on-chain data for V3 contract.
+   *
+   * @param {Brand['id']} id - The ID of the brand to retrieve.
+   * @returns {Promise<BrandResponse>} The brand entity with on-chain information.
+   */
+  @Get('/brand/:id/enhanced')
+  async getEnhancedBrandInfo(
+    @Param('id') id: Brand['id'],
+    @Res() res: Response,
+  ): Promise<Response> {
+    try {
+      const brand = await this.brandService.getById(id, [], ['category']);
+      if (!brand) {
+        return hasError(
+          res,
+          HttpStatus.NOT_FOUND,
+          'getEnhancedBrandInfo',
+          'Brand not found',
+        );
+      }
+
+      const enhancedBrand = {
+        ...brand,
+        onChain: {
+          fid: brand.onChainFid,
+          walletAddress: brand.walletAddress,
+          totalBrndAwarded: brand.totalBrndAwarded,
+          availableBrnd: brand.availableBrnd,
+          handle: brand.onChainHandle,
+          metadataHash: brand.metadataHash,
+          createdAt: brand.onChainCreatedAt?.getTime() || null,
+        },
+      };
+
+      return hasResponse(res, enhancedBrand);
+    } catch (error) {
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'getEnhancedBrandInfo',
+        'Failed to retrieve enhanced brand information',
+      );
+    }
+  }
+
+  /**
+   * Initiates brand reward withdrawal for V3 contract.
+   *
+   * @param {Brand['id']} brandId - The ID of the brand.
+   * @param {string} requesterAddress - The address requesting withdrawal.
+   * @returns {Promise<Response>} Withdrawal initiation result.
+   */
+  @Post('/brand/:brandId/withdraw')
+  @UseGuards(AuthorizationGuard)
+  async initiateBrandWithdrawal(
+    @Session() session: QuickAuthPayload,
+    @Param('brandId') brandId: Brand['id'],
+    @Body() { requesterAddress }: { requesterAddress: string },
+    @Res() res: Response,
+  ): Promise<Response> {
+    try {
+      logger.log(
+        `💰 [BRAND] Withdrawal request for brand ${brandId} by FID: ${session.sub}`,
+      );
+
+      if (!requesterAddress) {
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'initiateBrandWithdrawal',
+          'Requester address is required',
+        );
+      }
+
+      // Get brand information
+      const brand = await this.brandService.getById(brandId);
+      if (!brand) {
+        return hasError(
+          res,
+          HttpStatus.NOT_FOUND,
+          'initiateBrandWithdrawal',
+          'Brand not found',
+        );
+      }
+
+      // Check if requester has permission (brand owner FID or wallet address)
+      const hasPermission = 
+        brand.onChainFid === session.sub || 
+        brand.walletAddress?.toLowerCase() === requesterAddress.toLowerCase();
+
+      if (!hasPermission) {
+        return hasError(
+          res,
+          HttpStatus.FORBIDDEN,
+          'initiateBrandWithdrawal',
+          'You do not have permission to withdraw rewards for this brand',
+        );
+      }
+
+      // Return withdrawal information (in a real implementation, this would trigger the smart contract withdrawal)
+      return hasResponse(res, {
+        brandId: brand.id,
+        brandName: brand.name,
+        availableBrnd: brand.availableBrnd,
+        totalBrndAwarded: brand.totalBrndAwarded,
+        walletAddress: brand.walletAddress,
+        requesterAddress,
+        canWithdraw: parseFloat(brand.availableBrnd) > 0,
+        message: parseFloat(brand.availableBrnd) > 0 
+          ? 'Withdrawal can be initiated on-chain' 
+          : 'No rewards available for withdrawal',
+      });
+    } catch (error) {
+      logger.error('Failed to initiate brand withdrawal:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'initiateBrandWithdrawal',
+        'Failed to process withdrawal request',
+      );
+    }
   }
 
   /**

@@ -112,6 +112,28 @@ export class Brand {
   })
   currentRanking: number;
 
+  // V3 Contract Integration Fields
+  @Column({ nullable: true, length: 42 })
+  walletAddress: string;
+
+  @Column({ type: 'decimal', precision: 36, scale: 18, default: '0' })
+  totalBrndAwarded: string;
+
+  @Column({ type: 'decimal', precision: 36, scale: 18, default: '0' })
+  availableBrnd: string;
+
+  @Column({ nullable: true })
+  onChainCreatedAt: Date;
+
+  @Column({ nullable: true })
+  onChainFid: number;
+
+  @Column({ nullable: true })
+  onChainHandle: string;
+
+  @Column({ nullable: true })
+  metadataHash: string;
+
   @OneToMany(() => UserBrandVotes, (userBrandVotes) => userBrandVotes.brand1)
   userBrandVotes1: UserBrandVotes[];
 

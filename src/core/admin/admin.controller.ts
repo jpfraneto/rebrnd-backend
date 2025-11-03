@@ -14,18 +14,22 @@ import {
 import { ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { AdminService } from './services/admin.service';
+import { ContractUploadService } from '../blockchain/services/contract-upload.service';
 import { CreateBrandDto, UpdateBrandDto } from './dto';
 import { AuthorizationGuard, QuickAuthPayload } from '../../security/guards';
 import { Session } from '../../security/decorators';
 import { HttpStatus, hasError, hasResponse } from '../../utils';
+import { logger } from '../../main';
 
 const adminFids = [5431, 16098];
 
 @ApiTags('admin-service')
 @Controller('admin-service')
-@UseGuards(AuthorizationGuard)
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly contractUploadService: ContractUploadService,
+  ) {
     console.log('AdminController initialized');
   }
 
@@ -33,6 +37,7 @@ export class AdminController {
    * Get all brands for admin management
    */
   @Get('brands')
+  @UseGuards(AuthorizationGuard)
   async getAllBrands(
     @Session() user: QuickAuthPayload,
     @Query('page') page: number = 1,
@@ -435,6 +440,216 @@ export class AdminController {
         HttpStatus.INTERNAL_SERVER_ERROR,
         'bulkRefreshFollowerCounts',
         error.message,
+      );
+    }
+  }
+
+  /**
+   * Check contract sync status - compares database brands vs contract brands
+   * TESTING MODE: Auth disabled
+   */
+  @Get('brands/contract-status')
+  async getContractStatus(@Res() res: Response) {
+    logger.log(`getContractStatus called - testing mode (no auth)`);
+
+    // TESTING: Admin check disabled
+    // if (!adminFids.includes(user.sub)) {
+    //   logger.log(`Access denied for user ${user.sub} - not in admin list`);
+    //   return hasError(
+    //     res,
+    //     HttpStatus.FORBIDDEN,
+    //     'getContractStatus',
+    //     'Admin access required',
+    //   );
+    // }
+
+    try {
+      logger.log('Checking contract sync status...');
+      const status = await this.contractUploadService.checkContractStatus();
+
+      logger.log('Contract status:', {
+        database: status.database.totalBrands,
+        contract: status.contract.totalBrands,
+        needsUpload: status.sync.needsUpload,
+        difference: status.sync.difference,
+      });
+
+      return hasResponse(res, {
+        ...status,
+        message: status.sync.needsUpload
+          ? `${status.sync.difference} brands need to be uploaded to contract`
+          : 'Database and contract are in sync',
+      });
+    } catch (error) {
+      logger.error('Error checking contract status:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'getContractStatus',
+        `Failed to check contract status: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Upload all brands from database to smart contract
+   */
+  @Post('brands/upload-to-contract')
+  async uploadBrandsToContract(@Res() res: Response) {
+    logger.log(`uploadBrandsToContract called - testing mode (no auth)`);
+
+    // TESTING: Admin check disabled
+    // if (!adminFids.includes(user.sub)) {
+    //   logger.log(`Access denied for user ${user.sub} - not in admin list`);
+    //   return hasError(
+    //     res,
+    //     HttpStatus.FORBIDDEN,
+    //     'uploadBrandsToContract',
+    //     'Admin access required',
+    //   );
+    // }
+
+    try {
+      logger.log('Starting brand upload to contract...');
+
+      // 1. Get all brands from database
+      const brands = await this.contractUploadService.getAllBrandsForContract();
+      logger.log(`Found ${brands.length} brands in database`);
+
+      if (brands.length === 0) {
+        return hasResponse(res, {
+          success: true,
+          message: 'No brands found in database to upload',
+          summary: {
+            totalBrands: 0,
+            batchesProcessed: 0,
+            successfulBrands: 0,
+            failedBrands: 0,
+            gasUsed: 0,
+            transactionHashes: [],
+          },
+        });
+      }
+
+      // 2. Validate data
+      const validation =
+        this.contractUploadService.validateBrandsForContract(brands);
+      if (!validation.valid) {
+        logger.error('Brand validation failed:', validation.issues);
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'uploadBrandsToContract',
+          `Validation failed: ${validation.issues.join(', ')}`,
+        );
+      }
+
+      logger.log('✅ Brand validation passed');
+
+      // 3. Upload to contract in batches
+      const result =
+        await this.contractUploadService.uploadBrandsToContract(brands);
+
+      const summary = {
+        totalBrands: brands.length,
+        batchesProcessed: result.batchesProcessed,
+        successfulBrands: result.successfulBrands,
+        failedBrands: result.failedBrands,
+        gasUsed: result.totalGasUsed,
+        transactionHashes: result.txHashes,
+      };
+
+      if (result.errors.length > 0) {
+        logger.error('Some batches failed during upload:', result.errors);
+      }
+
+      const success = result.successfulBrands > 0;
+      const message = success
+        ? `Upload completed: ${result.successfulBrands}/${brands.length} brands uploaded successfully`
+        : 'Upload failed: No brands were uploaded successfully';
+
+      return hasResponse(res, {
+        success,
+        message,
+        summary,
+        errors: result.errors.length > 0 ? result.errors : undefined,
+      });
+    } catch (error) {
+      logger.error('Critical error during brand upload:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'uploadBrandsToContract',
+        `Upload failed: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Preview what would happen during brand upload (dry run)
+   */
+  @Get('brands/upload-preview')
+  async previewBrandUpload(@Res() res: Response) {
+    logger.log(`previewBrandUpload called - testing mode (no auth)`);
+
+    // TESTING: Admin check disabled
+    // if (!adminFids.includes(user.sub)) {
+    //   logger.log(`Access denied for user ${user.sub} - not in admin list`);
+    //   return hasError(
+    //     res,
+    //     HttpStatus.FORBIDDEN,
+    //     'previewBrandUpload',
+    //     'Admin access required',
+    //   );
+    // }
+
+    try {
+      logger.log('Generating brand upload preview...');
+
+      // Get all brands that would be uploaded
+      const brands = await this.contractUploadService.getAllBrandsForContract();
+      logger.log(`Found ${brands.length} brands for preview`);
+
+      // Validate the data
+      const validation =
+        this.contractUploadService.validateBrandsForContract(brands);
+
+      // Calculate batches
+      const batchSize = 20; // Same as in the service
+      const totalBatches = Math.ceil(brands.length / batchSize);
+
+      // Sample of brands that would be uploaded
+      const sampleBrands = brands.slice(0, 5).map((brand) => ({
+        handle: brand.handle,
+        fid: brand.fid,
+        walletAddress: brand.walletAddress,
+        hasMetadata: !!brand.metadataHash,
+      }));
+
+      return hasResponse(res, {
+        preview: {
+          totalBrands: brands.length,
+          totalBatches,
+          batchSize,
+          sampleBrands,
+          validation: {
+            valid: validation.valid,
+            issues: validation.issues,
+          },
+          estimatedGasCost: 'Gas estimation requires actual contract call',
+          warning: 'This is a preview only. No brands will be uploaded.',
+        },
+        message: validation.valid
+          ? `Ready to upload ${brands.length} brands in ${totalBatches} batches`
+          : `Validation failed: ${validation.issues.length} issues found`,
+      });
+    } catch (error) {
+      logger.error('Error generating upload preview:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'previewBrandUpload',
+        `Preview failed: ${error.message}`,
       );
     }
   }

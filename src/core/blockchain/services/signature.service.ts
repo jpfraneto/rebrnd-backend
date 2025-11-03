@@ -11,8 +11,9 @@ import { logger } from '../../../main';
 
 @Injectable()
 export class SignatureService {
-  private readonly CONTRACT_ADDRESS = '0xAf5806B62EC2dB8519BfE408cF521023Bc5C7e61';
-  private readonly DOMAIN_NAME = 'StoriesInMotionV1';
+  private readonly CONTRACT_ADDRESS =
+    '0x201eE52d421b75864977f77601bc45BfcCe7fC5B'; // Update this with V3 contract address
+  private readonly DOMAIN_NAME = 'StoriesInMotionV4';
   private readonly DOMAIN_VERSION = '1';
   private readonly CHAIN_ID = 8453; // Base mainnet
 
@@ -33,7 +34,9 @@ export class SignatureService {
     const config = getConfig();
 
     if (!process.env.PRIVATE_KEY) {
-      logger.error(`❌ [SIGNATURE] PRIVATE_KEY environment variable is not set`);
+      logger.error(
+        `❌ [SIGNATURE] PRIVATE_KEY environment variable is not set`,
+      );
       throw new Error('PRIVATE_KEY environment variable is not set');
     }
 
@@ -92,7 +95,9 @@ export class SignatureService {
       },
     });
 
-    logger.log(`✅ [SIGNATURE] Authorization signature generated: ${signature}`);
+    logger.log(
+      `✅ [SIGNATURE] Authorization signature generated: ${signature}`,
+    );
 
     const authData = encodeAbiParameters(
       [
@@ -180,11 +185,12 @@ export class SignatureService {
   }
 
   async generateRewardClaimSignature(
+    recipient: string,
     fid: number,
     amount: string,
     day: number,
     deadline: number,
-  ): Promise<string> {
+  ): Promise<{ signature: string; nonce: number }> {
     logger.log(
       `💰 [SIGNATURE] Generating reward claim signature for FID: ${fid}, Amount: ${amount}`,
     );
@@ -217,8 +223,8 @@ export class SignatureService {
     } as const;
 
     const types = {
-      ClaimReward: [
-        { name: 'user', type: 'address' },
+      RewardClaim: [
+        { name: 'recipient', type: 'address' },
         { name: 'amount', type: 'uint256' },
         { name: 'fid', type: 'uint256' },
         { name: 'day', type: 'uint256' },
@@ -230,7 +236,7 @@ export class SignatureService {
     const nonce = Date.now();
 
     logger.log(`💰 [SIGNATURE] Signing reward claim message with:`);
-    logger.log(`   - User: ${account.address}`);
+    logger.log(`   - Recipient: ${recipient}`);
     logger.log(`   - Amount: ${amount}`);
     logger.log(`   - FID: ${fid}`);
     logger.log(`   - Day: ${day}`);
@@ -241,9 +247,9 @@ export class SignatureService {
       account,
       domain,
       types,
-      primaryType: 'ClaimReward',
+      primaryType: 'RewardClaim',
       message: {
-        user: account.address,
+        recipient: recipient as `0x${string}`,
         amount: BigInt(amount),
         fid: BigInt(fid),
         day: BigInt(day),
@@ -254,6 +260,6 @@ export class SignatureService {
 
     logger.log(`✅ [SIGNATURE] Reward claim signature generated: ${signature}`);
 
-    return signature;
+    return { signature, nonce };
   }
 }
