@@ -1,10 +1,35 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { createPublicClient, http, Address } from 'viem';
+import { base } from 'viem/chains';
 
 import { User } from '../../../models';
 import { getConfig } from '../../../security/config';
 import { logger } from '../../../main';
+
+// Contract ABI for StoriesInMotionV5
+const STORIES_IN_MOTION_V5_ABI = [
+  {
+    inputs: [{ internalType: 'uint256', name: 'fid', type: 'uint256' }],
+    name: 'getUserInfo',
+    outputs: [
+      { internalType: 'uint256', name: 'userFid', type: 'uint256' },
+      { internalType: 'uint8', name: 'brndPowerLevel', type: 'uint8' },
+      { internalType: 'uint32', name: 'lastVoteDay', type: 'uint32' },
+      { internalType: 'uint256', name: 'totalVotes', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'fid', type: 'uint256' }],
+    name: 'getUserWallets',
+    outputs: [{ internalType: 'address[]', name: '', type: 'address[]' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+] as const;
 
 @Injectable()
 export class BlockchainService {
@@ -15,6 +40,14 @@ export class BlockchainService {
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
+
+  private getPublicClient() {
+    const config = getConfig();
+    return createPublicClient({
+      chain: base,
+      transport: http(config.blockchain.baseRpcUrl),
+    });
+  }
 
   async getUserStakeInfo(fid: number): Promise<{
     walletBalance: number;
@@ -302,6 +335,100 @@ export class BlockchainService {
     } catch (error) {
       logger.error('Error checking follow status:', error);
       return { followingBrnd: false, followingFloc: false };
+    }
+  }
+
+  async getUserInfoFromContractByFid(fid: number): Promise<{
+    fid: number;
+    brndPowerLevel: number;
+    lastVoteDay: number;
+    totalVotes: number;
+    authorizedWallets: string[];
+  } | null> {
+    try {
+      logger.log(
+        `📋 [BLOCKCHAIN] Getting user info from V5 contract for FID: ${fid}`,
+      );
+
+      const CONTRACT_ADDRESS = process.env.STORIES_IN_MOTION_V5_ADDRESS;
+
+      if (!CONTRACT_ADDRESS) {
+        throw new Error(
+          'STORIES_IN_MOTION_V5_ADDRESS environment variable not set',
+        );
+      }
+
+      const publicClient = this.getPublicClient();
+
+      // Call getUserInfo(uint256 fid) using viem
+      const result = (await publicClient.readContract({
+        address: CONTRACT_ADDRESS as Address,
+        abi: STORIES_IN_MOTION_V5_ABI,
+        functionName: 'getUserInfo',
+        args: [BigInt(fid)],
+      } as any)) as [bigint, number, number, bigint];
+
+      // result is a tuple: [userFid, brndPowerLevel, lastVoteDay, totalVotes]
+      const [userFid, brndPowerLevel, lastVoteDay, totalVotes] = result;
+
+      // If FID is 0, user doesn't exist
+      if (userFid === 0n) {
+        return null;
+      }
+
+      // Get authorized wallets for this FID
+      const wallets = await this.getUserWalletsFromContract(fid);
+
+      logger.log(`✅ [BLOCKCHAIN] Contract user info for FID ${fid}:`, {
+        fid: Number(userFid),
+        brndPowerLevel: Number(brndPowerLevel),
+        lastVoteDay: Number(lastVoteDay),
+        totalVotes: Number(totalVotes),
+        walletCount: wallets.length,
+      });
+
+      return {
+        fid: Number(userFid),
+        brndPowerLevel: Number(brndPowerLevel),
+        lastVoteDay: Number(lastVoteDay),
+        totalVotes: Number(totalVotes),
+        authorizedWallets: wallets,
+      };
+    } catch (error) {
+      logger.error(
+        `Error getting user info from contract for FID ${fid}:`,
+        error,
+      );
+      return null;
+    }
+  }
+
+  async getUserWalletsFromContract(fid: number): Promise<string[]> {
+    try {
+      const CONTRACT_ADDRESS = process.env.STORIES_IN_MOTION_V5_ADDRESS;
+
+      if (!CONTRACT_ADDRESS) {
+        return [];
+      }
+
+      const publicClient = this.getPublicClient();
+
+      // Call getUserWallets(uint256 fid) using viem
+      const wallets = (await publicClient.readContract({
+        address: CONTRACT_ADDRESS as Address,
+        abi: STORIES_IN_MOTION_V5_ABI,
+        functionName: 'getUserWallets',
+        args: [BigInt(fid)],
+      } as any)) as Address[];
+
+      // wallets is an array of addresses
+      return wallets.map((wallet) => wallet.toLowerCase());
+    } catch (error) {
+      logger.error(
+        `Error getting user wallets from contract for FID ${fid}:`,
+        error,
+      );
+      return [];
     }
   }
 }

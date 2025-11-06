@@ -48,10 +48,16 @@ export const getConfig = () => ({
   },
   blockchain: {
     baseRpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
-    contractAddress: process.env.CONTRACT_ADDRESS || '0xAf5806B62EC2dB8519BfE408cF521023Bc5C7e61',
+    contractAddress:
+      process.env.CONTRACT_ADDRESS ||
+      '0x570b1138AFc0F40B990792FA134005e32a9f0503',
     backendPrivateKey: process.env.PRIVATE_KEY,
-    brndTokenAddress: process.env.BRND_TOKEN_ADDRESS || '0x41Ed0311640A5e489A90940b1c33433501a21B07',
-    tellerVaultAddress: process.env.TELLER_VAULT_ADDRESS || '0x19d1872d8328b23a219e11d3d6eeee1954a88f88',
+    brndTokenAddress:
+      process.env.BRND_TOKEN_ADDRESS ||
+      '0x41Ed0311640A5e489A90940b1c33433501a21B07',
+    tellerVaultAddress:
+      process.env.TELLER_VAULT_ADDRESS ||
+      '0x19d1872d8328b23a219e11d3d6eeee1954a88f88',
   },
   notifications: {
     enabled: process.env.NOTIFICATIONS_ENABLED !== 'false',

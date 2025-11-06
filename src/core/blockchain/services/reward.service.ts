@@ -82,6 +82,7 @@ export class RewardService {
     fid: number,
     day: number,
     recipientAddress: string,
+    castHash?: string,
   ): Promise<ClaimRewardResponse> {
     try {
       logger.log(`💰 [REWARD] Generating claim signature for FID: ${fid}, Day: ${day}`);
@@ -98,12 +99,14 @@ export class RewardService {
 
       const amount = this.calculateRewardAmount(user.brndPowerLevel);
       const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour deadline
+      const finalCastHash = castHash || `day-${day}-fid-${fid}`; // Default cast hash if not provided
 
       const { signature, nonce } = await this.signatureService.generateRewardClaimSignature(
         recipientAddress,
         fid,
         amount,
         day,
+        finalCastHash,
         deadline,
       );
 

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import {
   createWalletClient,
   createPublicClient,
@@ -16,7 +16,7 @@ import { Brand } from '../../../models';
 import { getConfig } from '../../../security/config';
 import { logger } from '../../../main';
 
-// Contract ABI for StoriesInMotionV4
+// Contract ABI for StoriesInMotionV5
 const CONTRACT_ABI = [
   {
     inputs: [
@@ -53,25 +53,6 @@ const CONTRACT_ABI = [
     type: 'error',
   },
   { inputs: [], name: 'Unauthorized', type: 'error' },
-  {
-    anonymous: false,
-    inputs: [
-      {
-        indexed: false,
-        internalType: 'uint256',
-        name: 'oldCost',
-        type: 'uint256',
-      },
-      {
-        indexed: false,
-        internalType: 'uint256',
-        name: 'newCost',
-        type: 'uint256',
-      },
-    ],
-    name: 'BaseVoteCostUpdated',
-    type: 'event',
-  },
   {
     anonymous: false,
     inputs: [
@@ -272,6 +253,12 @@ const CONTRACT_ABI = [
       { indexed: false, internalType: 'uint256', name: 'day', type: 'uint256' },
       {
         indexed: false,
+        internalType: 'string',
+        name: 'castHash',
+        type: 'string',
+      },
+      {
+        indexed: false,
         internalType: 'address',
         name: 'caller',
         type: 'address',
@@ -296,6 +283,13 @@ const CONTRACT_ABI = [
   },
   {
     inputs: [],
+    name: 'BASE_VOTE_COST',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
     name: 'BRND_TOKEN',
     outputs: [{ internalType: 'contract IBRND', name: '', type: 'address' }],
     stateMutability: 'view',
@@ -305,6 +299,13 @@ const CONTRACT_ABI = [
     inputs: [],
     name: 'ESCROW_WALLET',
     outputs: [{ internalType: 'address', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'LEVEL_1_VOTE_COST',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
     stateMutability: 'view',
     type: 'function',
   },
@@ -344,13 +345,6 @@ const CONTRACT_ABI = [
     type: 'function',
   },
   {
-    inputs: [],
-    name: 'baseVoteCost',
-    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function',
-  },
-  {
     inputs: [
       { internalType: 'string[]', name: 'handles', type: 'string[]' },
       { internalType: 'string[]', name: 'metadataHashes', type: 'string[]' },
@@ -383,6 +377,7 @@ const CONTRACT_ABI = [
       { internalType: 'uint256', name: 'amount', type: 'uint256' },
       { internalType: 'uint256', name: 'fid', type: 'uint256' },
       { internalType: 'uint256', name: 'day', type: 'uint256' },
+      { internalType: 'string', name: 'castHash', type: 'string' },
       { internalType: 'uint256', name: 'deadline', type: 'uint256' },
       { internalType: 'bytes', name: 'signature', type: 'bytes' },
     ],
@@ -431,6 +426,16 @@ const CONTRACT_ABI = [
     type: 'function',
   },
   {
+    inputs: [
+      { internalType: 'uint256', name: '', type: 'uint256' },
+      { internalType: 'address', name: '', type: 'address' },
+    ],
+    name: 'fidWalletAuthorized',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
     inputs: [{ internalType: 'uint16', name: 'brandId', type: 'uint16' }],
     name: 'getBrand',
     outputs: [
@@ -448,7 +453,7 @@ const CONTRACT_ABI = [
           { internalType: 'string', name: 'metadataHash', type: 'string' },
           { internalType: 'uint256', name: 'createdAt', type: 'uint256' },
         ],
-        internalType: 'struct StoriesInMotionV4.Brand',
+        internalType: 'struct StoriesInMotionV5.Brand',
         name: '',
         type: 'tuple',
       },
@@ -465,7 +470,7 @@ const CONTRACT_ABI = [
   },
   {
     inputs: [
-      { internalType: 'address', name: 'wallet', type: 'address' },
+      { internalType: 'uint256', name: 'fid', type: 'uint256' },
       { internalType: 'uint256', name: 'day', type: 'uint256' },
     ],
     name: 'getDailyPodium',
@@ -477,12 +482,31 @@ const CONTRACT_ABI = [
     inputs: [{ internalType: 'uint8', name: 'brndPowerLevel', type: 'uint8' }],
     name: 'getRewardAmount',
     outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'pure',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'fid', type: 'uint256' }],
+    name: 'getUserBrndPowerLevel',
+    outputs: [{ internalType: 'uint8', name: '', type: 'uint8' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'fid', type: 'uint256' }],
+    name: 'getUserInfo',
+    outputs: [
+      { internalType: 'uint256', name: 'userFid', type: 'uint256' },
+      { internalType: 'uint8', name: 'brndPowerLevel', type: 'uint8' },
+      { internalType: 'uint32', name: 'lastVoteDay', type: 'uint32' },
+      { internalType: 'uint256', name: 'totalVotes', type: 'uint256' },
+    ],
     stateMutability: 'view',
     type: 'function',
   },
   {
     inputs: [{ internalType: 'address', name: 'wallet', type: 'address' }],
-    name: 'getUserInfo',
+    name: 'getUserInfoByWallet',
     outputs: [
       { internalType: 'uint256', name: 'fid', type: 'uint256' },
       { internalType: 'uint8', name: 'brndPowerLevel', type: 'uint8' },
@@ -493,10 +517,24 @@ const CONTRACT_ABI = [
     type: 'function',
   },
   {
+    inputs: [{ internalType: 'uint256', name: 'fid', type: 'uint256' }],
+    name: 'getUserTotalVotes',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: 'fid', type: 'uint256' }],
+    name: 'getUserWallets',
+    outputs: [{ internalType: 'address[]', name: '', type: 'address[]' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
     inputs: [{ internalType: 'uint8', name: 'brndPowerLevel', type: 'uint8' }],
     name: 'getVoteCost',
     outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
-    stateMutability: 'view',
+    stateMutability: 'pure',
     type: 'function',
   },
   {
@@ -508,7 +546,7 @@ const CONTRACT_ABI = [
   },
   {
     inputs: [
-      { internalType: 'address', name: 'wallet', type: 'address' },
+      { internalType: 'uint256', name: 'fid', type: 'uint256' },
       { internalType: 'uint256', name: 'day', type: 'uint256' },
     ],
     name: 'hasVotedToday',
@@ -522,6 +560,7 @@ const CONTRACT_ABI = [
       { internalType: 'uint8', name: 'newLevel', type: 'uint8' },
       { internalType: 'uint256', name: 'deadline', type: 'uint256' },
       { internalType: 'bytes', name: 'signature', type: 'bytes' },
+      { internalType: 'bytes', name: 'authData', type: 'bytes' },
     ],
     name: 'levelUpBrndPower',
     outputs: [],
@@ -557,13 +596,6 @@ const CONTRACT_ABI = [
     type: 'function',
   },
   {
-    inputs: [{ internalType: 'uint256', name: 'newBaseCost', type: 'uint256' }],
-    name: 'setBaseVoteCost',
-    outputs: [],
-    stateMutability: 'nonpayable',
-    type: 'function',
-  },
-  {
     inputs: [{ internalType: 'address', name: 'newOwner', type: 'address' }],
     name: 'transferOwnership',
     outputs: [],
@@ -583,7 +615,7 @@ const CONTRACT_ABI = [
     type: 'function',
   },
   {
-    inputs: [{ internalType: 'address', name: '', type: 'address' }],
+    inputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
     name: 'users',
     outputs: [
       { internalType: 'uint256', name: 'fid', type: 'uint256' },
@@ -614,6 +646,7 @@ const CONTRACT_ABI = [
 ] as const;
 
 interface ContractBrand {
+  id: number; // Database ID for tracking
   handle: string;
   metadataHash: string;
   fid: number;
@@ -658,22 +691,33 @@ export class ContractUploadService {
     private readonly brandRepository: Repository<Brand>,
   ) {}
 
-  async getAllBrandsForContract(): Promise<ContractBrand[]> {
+  async getAllBrandsForContract(limit?: number): Promise<ContractBrand[]> {
     try {
       logger.log(
-        `📋 [CONTRACT] Fetching all brands from database for contract upload`,
+        `📋 [CONTRACT] Fetching ${limit || 'all'} brands from database for contract upload`,
       );
 
-      const brands = await this.brandRepository.find({
+      const queryOptions: any = {
         select: [
+          'id',
           'name',
           'onChainHandle',
           'metadataHash',
           'onChainFid',
           'walletAddress',
+          'isUploadedToContract',
         ],
-        order: { createdAt: 'ASC' },
-      });
+        where: {
+          isUploadedToContract: false, // Only get non-uploaded brands
+        },
+        order: { id: 'ASC' }, // Order by database ID for consistent contract IDs
+      };
+
+      if (limit) {
+        queryOptions.take = limit;
+      }
+
+      const brands = await this.brandRepository.find(queryOptions);
 
       logger.log(`📋 [CONTRACT] Found ${brands.length} brands in database`);
 
@@ -695,6 +739,7 @@ export class ContractUploadService {
         const walletAddress = brand.walletAddress || this.DEFAULT_WALLET;
 
         return {
+          id: brand.id,
           handle,
           metadataHash,
           fid,
@@ -764,7 +809,31 @@ export class ContractUploadService {
     };
   }
 
-  async uploadBrandsToContract(brands: ContractBrand[]): Promise<UploadResult> {
+  async resetUploadFlags(): Promise<void> {
+    try {
+      logger.log('🔄 [CONTRACT] Resetting all upload flags for fresh contract deployment');
+      await this.brandRepository.update({}, { isUploadedToContract: false });
+      logger.log('✅ [CONTRACT] All brand upload flags reset');
+    } catch (error) {
+      logger.error('Error resetting upload flags:', error);
+      throw error;
+    }
+  }
+
+  async markBrandsAsUploaded(brandIds: number[]): Promise<void> {
+    try {
+      await this.brandRepository.update(
+        { id: In(brandIds) },
+        { isUploadedToContract: true }
+      );
+      logger.log(`✅ [CONTRACT] Marked ${brandIds.length} brands as uploaded: [${brandIds.join(', ')}]`);
+    } catch (error) {
+      logger.error('Error marking brands as uploaded:', error);
+      throw error;
+    }
+  }
+
+  async uploadBrandsToContract(brands: ContractBrand[], resetFlags: boolean = true): Promise<UploadResult> {
     const results: UploadResult = {
       batchesProcessed: 0,
       successfulBrands: 0,
@@ -782,9 +851,9 @@ export class ContractUploadService {
         throw new Error('ADMIN_PRIVATE_KEY environment variable not set');
       }
 
-      if (!process.env.STORIES_IN_MOTION_V3_ADDRESS) {
+      if (!process.env.STORIES_IN_MOTION_V5_ADDRESS) {
         throw new Error(
-          'STORIES_IN_MOTION_V3_ADDRESS environment variable not set',
+          'STORIES_IN_MOTION_V5_ADDRESS environment variable not set',
         );
       }
 
@@ -806,7 +875,12 @@ export class ContractUploadService {
       });
 
       const contractAddress = process.env
-        .STORIES_IN_MOTION_V3_ADDRESS as `0x${string}`;
+        .STORIES_IN_MOTION_V5_ADDRESS as `0x${string}`;
+
+      // Reset upload flags for fresh contract deployment
+      if (resetFlags) {
+        await this.resetUploadFlags();
+      }
 
       logger.log(
         `🚀 [CONTRACT] Starting upload of ${brands.length} brands in batches of ${this.BATCH_SIZE}`,
@@ -883,6 +957,10 @@ export class ContractUploadService {
           results.totalGasUsed += Number(receipt.gasUsed);
           results.txHashes.push(receipt.transactionHash);
 
+          // Mark brands as uploaded in database
+          const brandIds = batch.map(brand => brand.id);
+          await this.markBrandsAsUploaded(brandIds);
+
           // Increment nonce for next transaction
           currentNonce++;
 
@@ -929,9 +1007,9 @@ export class ContractUploadService {
     try {
       const config = getConfig();
 
-      if (!process.env.STORIES_IN_MOTION_V3_ADDRESS) {
+      if (!process.env.STORIES_IN_MOTION_V5_ADDRESS) {
         throw new Error(
-          'STORIES_IN_MOTION_V3_ADDRESS environment variable not set',
+          'STORIES_IN_MOTION_V5_ADDRESS environment variable not set',
         );
       }
 
@@ -941,17 +1019,33 @@ export class ContractUploadService {
       });
 
       const contractAddress = process.env
-        .STORIES_IN_MOTION_V3_ADDRESS as `0x${string}`;
+        .STORIES_IN_MOTION_V5_ADDRESS as `0x${string}`;
 
-      const counter = await publicClient.readContract({
-        address: contractAddress,
-        abi: CONTRACT_ABI,
-        functionName: '_brandIdCounter',
-      } as any);
+      // Since _brandIdCounter is private in V5, we'll count by checking existing brands
+      // Try to get brands starting from ID 1 until we hit an error (brand doesn't exist)
+      let brandCount = 0;
+      let currentId = 1;
+      let maxChecks = 1000; // Safety limit to avoid infinite loop
+      
+      while (maxChecks > 0) {
+        try {
+          await publicClient.readContract({
+            address: contractAddress,
+            abi: CONTRACT_ABI,
+            functionName: 'getBrand',
+            args: [currentId],
+          } as any);
+          
+          brandCount++;
+          currentId++;
+          maxChecks--;
+        } catch (error) {
+          // Brand doesn't exist, we've found our count
+          break;
+        }
+      }
 
-      const brandCount = Number(counter) - 1; // Counter starts at 1
-
-      logger.log(`📊 [CONTRACT] Contract has ${brandCount} brands`);
+      logger.log(`📊 [CONTRACT] Contract has ${brandCount} brands (checked up to ID ${currentId - 1})`);
       return brandCount;
     } catch (error) {
       logger.error('Error getting contract brand count:', error);
@@ -966,6 +1060,17 @@ export class ContractUploadService {
       return count;
     } catch (error) {
       logger.error('Error getting database brand count:', error);
+      throw error;
+    }
+  }
+
+  async getUploadedBrandCount(): Promise<number> {
+    try {
+      const count = await this.brandRepository.count({ where: { isUploadedToContract: true } });
+      logger.log(`📊 [DATABASE] Database has ${count} uploaded brands`);
+      return count;
+    } catch (error) {
+      logger.error('Error getting uploaded brand count:', error);
       throw error;
     }
   }

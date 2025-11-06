@@ -11,7 +11,11 @@ import { AuthorizationGuard, QuickAuthPayload } from '../../security/guards';
 import { Session } from '../../security/decorators';
 
 import { HttpStatus } from '../../utils';
-import { BadRequestException, ForbiddenException, InternalServerErrorException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 
 import { logger } from '../../main';
 
@@ -40,14 +44,17 @@ export class BlockchainController {
       const { walletAddress, deadline } = body;
 
       if (!walletAddress || !deadline) {
-        throw new BadRequestException('Wallet address and deadline are required');
+        throw new BadRequestException(
+          'Wallet address and deadline are required',
+        );
       }
 
-      const authData = await this.signatureService.generateAuthorizationSignature(
-        session.sub,
-        walletAddress,
-        deadline,
-      );
+      const authData =
+        await this.signatureService.generateAuthorizationSignature(
+          session.sub,
+          walletAddress,
+          deadline,
+        );
 
       return {
         authData,
@@ -65,17 +72,19 @@ export class BlockchainController {
   @UseGuards(AuthorizationGuard)
   async levelUp(
     @Session() session: QuickAuthPayload,
-    @Body() body: { newLevel: number; deadline: number },
+    @Body() body: { newLevel: number; deadline: number; walletAddress: string },
   ) {
     try {
       logger.log(
         `📈 [BLOCKCHAIN] Level up signature request for FID: ${session.sub}`,
       );
 
-      const { newLevel, deadline } = body;
+      const { newLevel, deadline, walletAddress } = body;
 
-      if (!newLevel || !deadline) {
-        throw new BadRequestException('New level and deadline are required');
+      if (!newLevel || !deadline || !walletAddress) {
+        throw new BadRequestException(
+          'New level, deadline, and wallet address are required',
+        );
       }
 
       const canLevelUp = await this.powerLevelService.canLevelUp(
@@ -84,13 +93,76 @@ export class BlockchainController {
       );
 
       if (!canLevelUp.eligible) {
-        throw new ForbiddenException(`Cannot level up: ${canLevelUp.reason}`);
+        // Build a user-friendly error message
+        let errorMessage = 'Cannot level up';
+
+        // Handle specific error cases with detailed messages
+        if (canLevelUp.reason === 'Can only level up one level at a time') {
+          const nextLevel = canLevelUp.currentLevel + 1;
+          const unmetRequirements = canLevelUp.requirements.filter(
+            (req) => !req.met,
+          );
+
+          if (unmetRequirements.length > 0) {
+            const reqMessages = unmetRequirements.map((req) => {
+              if (req.current !== undefined && req.required !== undefined) {
+                return `${req.description} (You have: ${req.current.toLocaleString()}, Required: ${req.required.toLocaleString()})`;
+              }
+              return req.description;
+            });
+            errorMessage = `You can only level up one level at a time. Your current level is ${canLevelUp.currentLevel}, and you're trying to reach level ${canLevelUp.nextLevel}. To level up to level ${nextLevel}, you need:\n${reqMessages.join('\n')}`;
+          } else {
+            errorMessage = `You can only level up one level at a time. Your current level is ${canLevelUp.currentLevel}, and you're trying to reach level ${canLevelUp.nextLevel}. Please level up to level ${nextLevel} first.`;
+          }
+        } else if (
+          canLevelUp.reason === 'Target level must be higher than current level'
+        ) {
+          errorMessage = `Target level (${canLevelUp.nextLevel}) must be higher than your current level (${canLevelUp.currentLevel}).`;
+        } else if (canLevelUp.reason === 'Invalid target level') {
+          errorMessage = `Invalid target level: ${canLevelUp.nextLevel}`;
+        } else if (canLevelUp.reason === 'Requirements not met') {
+          // Build detailed message from requirements
+          const unmetRequirements = canLevelUp.requirements.filter(
+            (req) => !req.met,
+          );
+          if (unmetRequirements.length > 0) {
+            const reqMessages = unmetRequirements.map((req) => {
+              if (req.current !== undefined && req.required !== undefined) {
+                return `${req.description} (You have: ${req.current.toLocaleString()}, Required: ${req.required.toLocaleString()})`;
+              }
+              return req.description;
+            });
+            errorMessage = `Requirements not met for level ${canLevelUp.nextLevel}:\n${reqMessages.join('\n')}`;
+          } else {
+            errorMessage = `Requirements not met for level ${canLevelUp.nextLevel}`;
+          }
+        } else if (canLevelUp.reason) {
+          errorMessage = `${errorMessage}: ${canLevelUp.reason}`;
+        }
+
+        // Throw ForbiddenException with structured error response
+        const errorResponse = {
+          message: errorMessage,
+          error: 'Level Up Validation Failed',
+          statusCode: 403,
+          validation: {
+            eligible: canLevelUp.eligible,
+            reason: canLevelUp.reason,
+            currentLevel: canLevelUp.currentLevel,
+            targetLevel: canLevelUp.nextLevel,
+            nextLevel: canLevelUp.currentLevel + 1, // The level they should be targeting
+            requirements: canLevelUp.requirements,
+          },
+        };
+
+        throw new ForbiddenException(errorResponse);
       }
 
       const signature = await this.signatureService.generateLevelUpSignature(
         session.sub,
         newLevel,
         deadline,
+        walletAddress,
       );
 
       return {
@@ -98,11 +170,25 @@ export class BlockchainController {
         fid: session.sub,
         newLevel,
         deadline,
+        walletAddress,
         validation: canLevelUp,
       };
     } catch (error) {
+      // If it's already a ForbiddenException with our structured response, re-throw it
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+
+      // If it's a BadRequestException, re-throw it
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      // For other errors, log and throw generic error
       logger.error('Failed to generate level up signature:', error);
-      throw new InternalServerErrorException('Failed to generate level up signature');
+      throw new InternalServerErrorException(
+        error.message || 'Failed to generate level up signature',
+      );
     }
   }
 
@@ -132,7 +218,9 @@ export class BlockchainController {
       return claimResponse;
     } catch (error) {
       logger.error('Failed to generate reward claim signature:', error);
-      throw new InternalServerErrorException(error.message || 'Failed to generate reward claim signature');
+      throw new InternalServerErrorException(
+        error.message || 'Failed to generate reward claim signature',
+      );
     }
   }
 
@@ -220,11 +308,12 @@ export class BlockchainController {
         throw new BadRequestException('Cast hash and day are required');
       }
 
-      const verificationResult = await this.castVerificationService.manuallyVerifyShare(
-        castHash,
-        session.sub,
-        day,
-      );
+      const verificationResult =
+        await this.castVerificationService.manuallyVerifyShare(
+          castHash,
+          session.sub,
+          day,
+        );
 
       return verificationResult;
     } catch (error) {
@@ -303,7 +392,8 @@ export class BlockchainController {
     try {
       logger.log(`📱 [WEBHOOK] Received cast webhook`);
 
-      const processed = await this.castVerificationService.processCastWebhook(payload);
+      const processed =
+        await this.castVerificationService.processCastWebhook(payload);
 
       return { processed };
     } catch (error) {

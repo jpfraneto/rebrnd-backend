@@ -822,6 +822,7 @@ export class BrandService {
           name: Like(`${searchName}%`),
         }),
         banned: 0, // Filter out banned brands
+        isUploadedToContract: true, // Only show uploaded brands for voting
       },
 
       ...(relations.length > 0 && {
@@ -879,6 +880,7 @@ export class BrandService {
           name: Like(`${searchName}%`),
         }),
         banned: 0,
+        isUploadedToContract: true, // Only show uploaded brands for voting
       },
       ...(relations.length > 0 && {
         relations,

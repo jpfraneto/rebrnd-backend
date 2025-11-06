@@ -202,6 +202,28 @@ export class PowerLevelService {
     private readonly blockchainService: BlockchainService,
   ) {}
 
+  /**
+   * Gets the user's power level information with completion status and progress.
+   *
+   * @returns {
+   *   currentLevel: number - The user's current level from the smart contract
+   *   currentPowerLevel: PowerLevel - The current level object with details
+   *   nextLevel?: PowerLevel - The next level to work on (undefined if at max level)
+   *     - isCompleted: boolean - Whether requirements are met (can level up)
+   *     - progress?: { current: number, total: number } - Progress tracking for stake/streak/podiums/collectibles
+   *     - requirement: { type, value, unit } - What needs to be done
+   *     - isActive: boolean - Whether this is the active level to work on
+   *   allLevels: PowerLevel[] - All levels with their completion status and progress
+   *   progress: {
+   *     stakedAmount: number - Current staked BRND tokens
+   *     totalBalance: number - Total BRND balance (staked + unstaked)
+   *     followingBrnd: boolean - Whether following @brnd
+   *     dailyStreak: number - Current voting streak
+   *     totalPodiums: number - Total podium votes
+   *     collectibles: number - Number of collectibles owned
+   *   }
+   * }
+   */
   async getUserPowerLevel(fid: number): Promise<{
     currentLevel: number;
     currentPowerLevel: PowerLevel;
@@ -234,19 +256,32 @@ export class PowerLevelService {
         followStatus,
       );
 
-      // Determine current level and populate power levels with progress
-      let currentLevel = 0;
+      // Get actual current level from V5 contract (not from achievements)
+      const contractUserInfo =
+        await this.blockchainService.getUserInfoFromContractByFid(fid);
+      const currentLevel = contractUserInfo
+        ? contractUserInfo.brndPowerLevel
+        : 0;
+
+      logger.log(
+        `📋 [POWER LEVEL] Contract level for FID ${fid}: ${currentLevel}`,
+      );
+
+      // Determine completion status based on achievements (for eligibility)
       const levelsWithProgress = this.POWER_LEVELS.map((level) => {
         const levelCopy = { ...level };
         const isCompleted = this.isLevelCompleted(level, achievements);
 
         levelCopy.isCompleted = isCompleted;
-        if (isCompleted && level.id > currentLevel) {
-          currentLevel = level.id;
-        }
 
         // Update progress for tracking levels
-        if (level.actionType === 'streak') {
+        if (level.actionType === 'stake') {
+          const requiredStake = level.requirement?.value as number;
+          levelCopy.progress = {
+            current: achievements.stakedAmount,
+            total: requiredStake,
+          };
+        } else if (level.actionType === 'streak') {
           levelCopy.progress = {
             current: achievements.dailyStreak,
             total: level.requirement?.value as number,
@@ -272,12 +307,13 @@ export class PowerLevelService {
       const currentPowerLevel = levelsWithProgress.find(
         (l) => l.id === currentLevel,
       );
-      const nextLevel = levelsWithProgress.find((l) => l.id === currentLevel + 1);
+      const nextLevel = levelsWithProgress.find(
+        (l) => l.id === currentLevel + 1,
+      );
 
       return {
         currentLevel,
-        currentPowerLevel:
-          currentPowerLevel || levelsWithProgress[0], // Default to level 1 if none completed
+        currentPowerLevel: currentPowerLevel || levelsWithProgress[0], // Default to level 1 if none completed
         nextLevel,
         allLevels: levelsWithProgress,
         progress: achievements,
@@ -288,14 +324,19 @@ export class PowerLevelService {
     }
   }
 
-  async canLevelUp(fid: number, targetLevel: number): Promise<PowerLevelValidation> {
+  async canLevelUp(
+    fid: number,
+    targetLevel: number,
+  ): Promise<PowerLevelValidation> {
     try {
       logger.log(
         `✅ [POWER LEVEL] Checking if FID ${fid} can level up to ${targetLevel}`,
       );
 
       const powerLevelData = await this.getUserPowerLevel(fid);
-      const targetPowerLevel = this.POWER_LEVELS.find(
+
+      // Find the target level with calculated completion status
+      const targetPowerLevel = powerLevelData.allLevels.find(
         (l) => l.id === targetLevel,
       );
 
@@ -320,15 +361,31 @@ export class PowerLevelService {
       }
 
       if (targetLevel !== powerLevelData.currentLevel + 1) {
+        // If trying to skip levels, check requirements for the next level
+        const nextLevel = powerLevelData.currentLevel + 1;
+        const nextPowerLevel = powerLevelData.allLevels.find(
+          (l) => l.id === nextLevel,
+        );
+
+        let nextLevelRequirements = [];
+        if (nextPowerLevel) {
+          nextLevelRequirements = await this.getLevelRequirements(
+            fid,
+            nextPowerLevel,
+            powerLevelData.progress,
+          );
+        }
+
         return {
           eligible: false,
           reason: 'Can only level up one level at a time',
           currentLevel: powerLevelData.currentLevel,
           nextLevel: targetLevel,
-          requirements: [],
+          requirements: nextLevelRequirements,
         };
       }
 
+      // Use the calculated completion status from achievements
       const isCompleted = targetPowerLevel.isCompleted;
       const requirements = await this.getLevelRequirements(
         fid,
@@ -375,7 +432,7 @@ export class PowerLevelService {
 
       case 'stake':
         const requiredStake = level.requirement?.value as number;
-        return achievements.totalBalance >= requiredStake;
+        return achievements.stakedAmount >= requiredStake;
 
       case 'streak':
         const requiredStreak = level.requirement?.value as number;
@@ -421,9 +478,9 @@ export class PowerLevelService {
       case 'stake':
         const requiredStake = level.requirement?.value as number;
         requirements.push({
-          met: achievements.totalBalance >= requiredStake,
+          met: achievements.stakedAmount >= requiredStake,
           description: `Stake ${(requiredStake / 1_000_000).toLocaleString()}M BRND tokens`,
-          current: Math.round(achievements.totalBalance),
+          current: Math.round(achievements.stakedAmount),
           required: requiredStake,
         });
         break;

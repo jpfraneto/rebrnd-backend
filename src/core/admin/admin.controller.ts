@@ -494,7 +494,8 @@ export class AdminController {
   /**
    * Upload all brands from database to smart contract
    */
-  @Post('brands/upload-to-contract')
+  @Get('brands/upload-to-contract')
+  // UPLOAD BRANDS TO SMART CONTRACT
   async uploadBrandsToContract(@Res() res: Response) {
     logger.log(`uploadBrandsToContract called - testing mode (no auth)`);
 
@@ -650,6 +651,152 @@ export class AdminController {
         HttpStatus.INTERNAL_SERVER_ERROR,
         'previewBrandUpload',
         `Preview failed: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Upload limited number of brands for testing (e.g., 20 brands)
+   */
+  @Post('brands/upload-to-contract-testing')
+  async uploadLimitedBrandsToContract(
+    @Body() body: { limit?: number },
+    @Res() res: Response,
+  ) {
+    const limit = body.limit || 20; // Default to 20 for testing
+    logger.log(`uploadLimitedBrandsToContract called - limit: ${limit} (no auth)`);
+
+    try {
+      logger.log(`Starting limited brand upload to contract (${limit} brands)...`);
+
+      // Get limited brands from database (non-uploaded only)
+      const brands = await this.contractUploadService.getAllBrandsForContract(limit);
+      logger.log(`Found ${brands.length} non-uploaded brands (requesting ${limit})`);
+
+      if (brands.length === 0) {
+        return hasResponse(res, {
+          success: true,
+          message: 'No non-uploaded brands found for limited upload',
+          summary: {
+            totalBrands: 0,
+            batchesProcessed: 0,
+            successfulBrands: 0,
+            failedBrands: 0,
+            gasUsed: 0,
+            transactionHashes: [],
+          },
+        });
+      }
+
+      // Validate brands
+      const validation = this.contractUploadService.validateBrandsForContract(brands);
+      
+      if (!validation.valid) {
+        logger.error('Brand validation failed:', validation.issues);
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'uploadLimitedBrandsToContract',
+          `Validation failed: ${validation.issues.join(', ')}`,
+        );
+      }
+
+      logger.log('✅ Brand validation passed');
+
+      // Upload to contract (don't reset flags - incremental upload)
+      const result = await this.contractUploadService.uploadBrandsToContract(brands, false);
+
+      const summary = {
+        totalBrands: brands.length,
+        batchesProcessed: result.batchesProcessed,
+        successfulBrands: result.successfulBrands,
+        failedBrands: result.failedBrands,
+        gasUsed: result.totalGasUsed,
+        transactionHashes: result.txHashes,
+      };
+
+      if (result.errors.length > 0) {
+        logger.error('Some batches failed during limited upload:', result.errors);
+      }
+
+      const success = result.successfulBrands > 0;
+      const message = success
+        ? `Limited upload completed: ${result.successfulBrands}/${brands.length} brands uploaded successfully`
+        : 'Limited upload failed: No brands were uploaded successfully';
+
+      return hasResponse(res, {
+        success,
+        message,
+        summary,
+        errors: result.errors.length > 0 ? result.errors : undefined,
+      });
+    } catch (error) {
+      logger.error('Critical error during limited brand upload:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'uploadLimitedBrandsToContract',
+        `Limited upload failed: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * View upload status of all brands
+   */
+  @Get('brands/upload-status')
+  async getBrandUploadStatus(@Res() res: Response) {
+    logger.log(`getBrandUploadStatus called (no auth)`);
+
+    try {
+      const totalBrands = await this.contractUploadService.getDatabaseBrandCount();
+      const uploadedCount = await this.contractUploadService.getUploadedBrandCount();
+      const remainingCount = totalBrands - uploadedCount;
+
+      return hasResponse(res, {
+        totalBrands,
+        uploadedBrands: uploadedCount,
+        remainingBrands: remainingCount,
+        uploadProgress: totalBrands > 0 ? Math.round((uploadedCount / totalBrands) * 100) : 0,
+        message: remainingCount > 0 
+          ? `${remainingCount} brands remaining to upload`
+          : 'All brands are uploaded to contract',
+      });
+    } catch (error) {
+      logger.error('Error getting brand upload status:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'getBrandUploadStatus',
+        `Failed to get upload status: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Reset upload flags (for new contract deployment)
+   */
+  @Post('brands/reset-upload-flags')
+  async resetUploadFlags(@Res() res: Response) {
+    logger.log(`resetUploadFlags called (no auth)`);
+
+    try {
+      await this.contractUploadService.resetUploadFlags();
+      const totalBrands = await this.contractUploadService.getDatabaseBrandCount();
+
+      return hasResponse(res, {
+        success: true,
+        message: `Reset upload flags for ${totalBrands} brands`,
+        totalBrands,
+        note: 'All brands are now marked as non-uploaded. Ready for fresh contract deployment.',
+      });
+    } catch (error) {
+      logger.error('Error resetting upload flags:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'resetUploadFlags',
+        `Failed to reset flags: ${error.message}`,
       );
     }
   }

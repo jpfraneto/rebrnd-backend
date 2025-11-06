@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { createWalletClient, http, encodeAbiParameters } from 'viem';
+import { createWalletClient, createPublicClient, http, encodeAbiParameters } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
 
@@ -12,8 +12,9 @@ import { logger } from '../../../main';
 @Injectable()
 export class SignatureService {
   private readonly CONTRACT_ADDRESS =
-    '0x201eE52d421b75864977f77601bc45BfcCe7fC5B'; // Update this with V3 contract address
-  private readonly DOMAIN_NAME = 'StoriesInMotionV4';
+    process.env.STORIES_IN_MOTION_V5_ADDRESS ||
+    '0x570b1138AFc0F40B990792FA134005e32a9f0503';
+  private readonly DOMAIN_NAME = 'StoriesInMotionV5';
   private readonly DOMAIN_VERSION = '1';
   private readonly CHAIN_ID = 8453; // Base mainnet
 
@@ -117,9 +118,10 @@ export class SignatureService {
     fid: number,
     newLevel: number,
     deadline: number,
+    walletAddress: string,
   ): Promise<string> {
     logger.log(
-      `📈 [SIGNATURE] Generating level up signature for FID: ${fid}, Level: ${newLevel}`,
+      `📈 [SIGNATURE] Generating level up signature for FID: ${fid}, Level: ${newLevel}, Wallet: ${walletAddress}`,
     );
 
     if (!process.env.PRIVATE_KEY) {
@@ -131,11 +133,46 @@ export class SignatureService {
       throw new Error('User not found');
     }
 
+    if (!walletAddress) {
+      throw new Error('Wallet address is required');
+    }
+
     const privateKey = process.env.PRIVATE_KEY.startsWith('0x')
       ? (process.env.PRIVATE_KEY as `0x${string}`)
       : (`0x${process.env.PRIVATE_KEY}` as `0x${string}`);
 
     const account = privateKeyToAccount(privateKey);
+    
+    // Create a public client to read from the contract
+    const publicClient = createPublicClient({
+      chain: base,
+      transport: http(),
+    });
+
+    // Define the fidNonces ABI fragment
+    const fidNoncesAbi = [
+      {
+        inputs: [
+          { name: 'fid', type: 'uint256' },
+          { name: 'wallet', type: 'address' }
+        ],
+        name: 'fidNonces',
+        outputs: [{ name: '', type: 'uint256' }],
+        stateMutability: 'view',
+        type: 'function',
+      },
+    ] as const;
+
+    // Read the current nonce from the contract for this FID and wallet
+    const nonce = await publicClient.readContract({
+      address: this.CONTRACT_ADDRESS as `0x${string}`,
+      abi: fidNoncesAbi,
+      functionName: 'fidNonces',
+      args: [BigInt(fid), walletAddress as `0x${string}`],
+    } as any);
+
+    logger.log(`📈 [SIGNATURE] Current nonce from contract: ${nonce}`);
+
     const walletClient = createWalletClient({
       account,
       chain: base,
@@ -158,13 +195,12 @@ export class SignatureService {
       ],
     } as const;
 
-    const nonce = Date.now();
-
     logger.log(`📈 [SIGNATURE] Signing level up message with:`);
     logger.log(`   - FID: ${fid}`);
     logger.log(`   - New Level: ${newLevel}`);
     logger.log(`   - Nonce: ${nonce}`);
     logger.log(`   - Deadline: ${deadline}`);
+    logger.log(`   - Wallet: ${walletAddress}`);
 
     const signature = await walletClient.signTypedData({
       account,
@@ -174,7 +210,7 @@ export class SignatureService {
       message: {
         fid: BigInt(fid),
         newLevel: newLevel,
-        nonce: BigInt(nonce),
+        nonce: BigInt(nonce as bigint),
         deadline: BigInt(deadline),
       },
     });
@@ -189,6 +225,7 @@ export class SignatureService {
     fid: number,
     amount: string,
     day: number,
+    castHash: string,
     deadline: number,
   ): Promise<{ signature: string; nonce: number }> {
     logger.log(
@@ -228,6 +265,7 @@ export class SignatureService {
         { name: 'amount', type: 'uint256' },
         { name: 'fid', type: 'uint256' },
         { name: 'day', type: 'uint256' },
+        { name: 'castHash', type: 'string' },
         { name: 'nonce', type: 'uint256' },
         { name: 'deadline', type: 'uint256' },
       ],
@@ -240,6 +278,7 @@ export class SignatureService {
     logger.log(`   - Amount: ${amount}`);
     logger.log(`   - FID: ${fid}`);
     logger.log(`   - Day: ${day}`);
+    logger.log(`   - Cast Hash: ${castHash}`);
     logger.log(`   - Nonce: ${nonce}`);
     logger.log(`   - Deadline: ${deadline}`);
 
@@ -253,6 +292,7 @@ export class SignatureService {
         amount: BigInt(amount),
         fid: BigInt(fid),
         day: BigInt(day),
+        castHash: castHash,
         nonce: BigInt(nonce),
         deadline: BigInt(deadline),
       },

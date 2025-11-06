@@ -72,6 +72,145 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 
 Nest is [MIT licensed](LICENSE).
 
+## Smart Contract Integration
+
+### Brand Upload Tracking System
+
+The backend includes a comprehensive system for managing brand uploads to the smart contract with efficient gas cost management and testing capabilities.
+
+#### Key Features
+
+- **Upload Status Tracking**: Each brand has an `isUploadedToContract` boolean flag
+- **Consistent ID Mapping**: Database ID directly maps to contract ID (Brand ID 1 → Contract ID 1)
+- **Gas Cost Control**: Upload specific number of brands for testing (default: 20 brands)
+- **Fresh Contract Deployment**: Reset all upload flags when deploying new contract versions
+- **Voting Filter**: Only uploaded brands appear in voting endpoints
+
+#### Environment Variables
+
+```bash
+# Required for contract operations
+STORIES_IN_MOTION_V5_ADDRESS=0x...  # V5 contract address
+ADMIN_PRIVATE_KEY=0x...             # Admin wallet private key for uploads
+```
+
+### Admin Endpoints (Unprotected for Testing)
+
+#### Check Upload Status
+```bash
+GET /admin-service/brands/upload-status
+```
+Returns upload progress and statistics:
+```json
+{
+  "totalBrands": 150,
+  "uploadedBrands": 20,
+  "remainingBrands": 130,
+  "uploadProgress": 13,
+  "message": "130 brands remaining to upload"
+}
+```
+
+#### Upload Limited Brands for Testing
+```bash
+POST /admin-service/brands/upload-to-contract-testing
+Content-Type: application/json
+
+{
+  "limit": 20
+}
+```
+- Uploads specific number of non-uploaded brands (default: 20)
+- Maintains database ID order for consistent contract IDs
+- Tracks successful uploads and marks brands as uploaded
+- **Does not reset flags** - incremental upload
+
+#### Upload All Brands (Full Deployment)
+```bash
+GET /admin-service/brands/upload-to-contract
+```
+- Resets all upload flags first (fresh contract deployment)
+- Uploads all non-uploaded brands to contract
+- Use when deploying a new contract version
+
+#### Reset Upload Flags
+```bash
+POST /admin-service/brands/reset-upload-flags
+```
+- Marks all brands as non-uploaded (`isUploadedToContract = false`)
+- Use before uploading to a new contract deployment
+- Prepares database for fresh upload
+
+#### Check Contract vs Database Status
+```bash
+GET /admin-service/brands/contract-status
+```
+Compares brands in database vs smart contract.
+
+### Testing Workflow
+
+1. **Deploy New Contract** → Reset upload flags
+   ```bash
+   POST /admin-service/brands/reset-upload-flags
+   ```
+
+2. **Upload Test Brands** → Upload 20 brands for frontend testing
+   ```bash
+   POST /admin-service/brands/upload-to-contract-testing
+   {"limit": 20}
+   ```
+
+3. **Check Progress** → Monitor upload status
+   ```bash
+   GET /admin-service/brands/upload-status
+   ```
+
+4. **Test Frontend** → Only uploaded brands will appear in voting
+   
+5. **Upload More** → Continue with additional batches as needed
+   ```bash
+   POST /admin-service/brands/upload-to-contract-testing
+   {"limit": 50}
+   ```
+
+### Implementation Details
+
+#### Database Schema
+```sql
+ALTER TABLE brands ADD COLUMN isUploadedToContract BOOLEAN DEFAULT FALSE;
+```
+
+#### Voting Filter
+All brand listing endpoints automatically filter to only show uploaded brands:
+```typescript
+where: {
+  banned: 0,
+  isUploadedToContract: true, // Only show uploaded brands
+}
+```
+
+#### Upload Process
+1. **Query brands** in database ID order (`ORDER BY id ASC`)
+2. **Filter non-uploaded** (`isUploadedToContract = false`)
+3. **Batch upload** to contract (20 brands per transaction)
+4. **Mark successful** uploads in database after each batch
+5. **Consistent IDs** ensure Database Brand ID = Contract Brand ID
+
+#### Gas Optimization
+- **Batch uploads**: 20 brands per transaction for gas efficiency
+- **Incremental uploads**: Only upload non-uploaded brands
+- **Testing limits**: Upload small batches to control gas costs
+- **Error handling**: Continue with next batch if one fails
+
+### Contract Compatibility
+
+- **V5 Contract Support**: Uses `StoriesInMotionV5` contract
+- **FID-based Architecture**: Supports new FID-centric user management
+- **Batch Creation**: Uses `batchCreateBrands()` for efficient uploads
+- **EIP-712 Signatures**: All operations properly signed by backend
+
 ------ DESIGN DECISIONS ---------
 
 - no /login route because this will always be accessed from inside a farcaster miniapp
+- smart contract upload tracking prevents duplicate uploads and controls gas costs
+- database ID order ensures consistent contract ID mapping for frontend integration

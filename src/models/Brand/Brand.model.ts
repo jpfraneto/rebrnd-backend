@@ -134,6 +134,10 @@ export class Brand {
   @Column({ nullable: true })
   metadataHash: string;
 
+  // Contract Upload Tracking
+  @Column({ default: false })
+  isUploadedToContract: boolean;
+
   @OneToMany(() => UserBrandVotes, (userBrandVotes) => userBrandVotes.brand1)
   userBrandVotes1: UserBrandVotes[];
 
