@@ -122,9 +122,15 @@ export class AirdropService {
       `   ${userSystemPoints} (base points) × ${totalMultiplier} (total multiplier) = ${airdropScore}`,
     );
 
-    // Note: percentage and tokenAllocation will be calculated properly in bulk process
-    const percentage = 0; // Placeholder - will be updated in bulk calculation
-    const tokenAllocation = 0; // Placeholder - will be updated in bulk calculation
+    // Get the actual tokenAllocation and percentage from the saved airdrop score
+    let percentage = 0;
+    let tokenAllocation = 0;
+    
+    if (existingAirdropScore) {
+      percentage = Number(existingAirdropScore.percentage) || 0;
+      tokenAllocation = Number(existingAirdropScore.tokenAllocation) || 0;
+      console.log(`📊 [AIRDROP] Using existing token allocation: ${tokenAllocation.toLocaleString()}, percentage: ${percentage.toFixed(6)}%`);
+    }
 
     // STEP 5: Calculate leaderboard position based on new airdrop score
     console.log(`🏅 [AIRDROP] STEP 5 - Calculating leaderboard position...`);
