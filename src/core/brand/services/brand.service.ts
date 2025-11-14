@@ -34,6 +34,33 @@ export class BrandService {
   // Add the UserBrandVotes import if you don't have it
   // import { UserBrandVotes } from '../../../models';
 
+  async getVoteByTransactionHash(
+    transactionHash: string,
+  ): Promise<UserBrandVotes | null> {
+    let vote: UserBrandVotes | null = null;
+    let attempts = 0;
+    const maxAttempts = 5;
+
+    while (!vote && attempts < maxAttempts) {
+      vote = await this.userBrandVotesRepository.findOne({
+        where: { transactionHash },
+        relations: ['user'],
+      });
+
+      if (vote) {
+        return vote;
+      }
+
+      attempts++;
+
+      if (attempts < maxAttempts) {
+        // Wait 1 second before retrying
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+
+    return vote;
+  }
   /**
    * Get cycle rankings with time remaining information
    * Safe read-only method for generating weekly/monthly screenshots
@@ -822,7 +849,6 @@ export class BrandService {
           name: Like(`${searchName}%`),
         }),
         banned: 0, // Filter out banned brands
-        isUploadedToContract: true, // Only show uploaded brands for voting
       },
 
       ...(relations.length > 0 && {
@@ -880,7 +906,6 @@ export class BrandService {
           name: Like(`${searchName}%`),
         }),
         banned: 0,
-        isUploadedToContract: true, // Only show uploaded brands for voting
       },
       ...(relations.length > 0 && {
         relations,
@@ -1058,6 +1083,39 @@ export class BrandService {
     } catch (error) {
       console.error('❌ [BrandService] Error marking vote as shared:', error);
       throw new Error('Failed to update vote sharing status');
+    }
+  }
+
+  /**
+   * Finds a verified share by user FID and day.
+   * Used for claim retrieval when user wants to get rewards for already shared vote.
+   *
+   * @param {number} userFid - The Farcaster ID of the user
+   * @param {number} day - The unix day timestamp (voteTimestamp / 86400)
+   * @returns {Promise<UserBrandVotes | null>} The verified share if found
+   */
+  async getVerifiedShareByUserAndDay(
+    userFid: number,
+    day: number,
+  ): Promise<UserBrandVotes | null> {
+    try {
+      const vote = await this.userBrandVotesRepository.findOne({
+        where: {
+          user: { fid: userFid },
+          day: day,
+          shared: true,
+          shareVerified: true,
+        },
+        relations: ['user', 'brand1', 'brand2', 'brand3'],
+      });
+
+      return vote;
+    } catch (error) {
+      console.error(
+        '❌ [BrandService] Error getting verified share by user and day:',
+        error,
+      );
+      throw new Error('Failed to retrieve verified share');
     }
   }
 

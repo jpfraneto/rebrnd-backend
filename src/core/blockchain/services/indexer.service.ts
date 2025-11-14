@@ -1,0 +1,546 @@
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Between } from 'typeorm';
+
+import { Brand, User, UserBrandVotes } from '../../../models';
+import { UserService } from '../../user/services';
+import { BrandService } from '../../brand/services';
+import { logger } from '../../../main';
+import {
+  SubmitVoteDto,
+  SubmitBrandDto,
+  SubmitRewardClaimDto,
+  UpdateUserLevelDto,
+} from '../dto';
+
+@Injectable()
+export class IndexerService {
+  constructor(
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(Brand)
+    private readonly brandRepository: Repository<Brand>,
+    @InjectRepository(UserBrandVotes)
+    private readonly userBrandVotesRepository: Repository<UserBrandVotes>,
+    private readonly userService: UserService,
+    private readonly brandService: BrandService,
+  ) {}
+
+  /**
+   * Handles vote submission from the Ponder indexer
+   */
+  async handleVoteSubmission(voteData: SubmitVoteDto): Promise<void> {
+    logger.log(`🗳️ [INDEXER] Processing vote submission: ${voteData.id}`);
+
+    try {
+      // Convert string values to appropriate types
+      const dayNumber = parseInt(voteData.day);
+      const blockNumber = parseInt(voteData.blockNumber);
+      const timestamp = parseInt(voteData.timestamp);
+      const voteDate = new Date(timestamp * 1000); // Convert Unix timestamp to Date
+
+      logger.log(`🗳️ [INDEXER] Vote details:`, {
+        id: voteData.id,
+        voter: voteData.voter,
+        fid: voteData.fid,
+        day: dayNumber,
+        brandIds: voteData.brandIds,
+        cost: voteData.cost,
+        blockNumber,
+        transactionHash: voteData.transactionHash,
+        date: voteDate.toISOString(),
+      });
+
+      // Find or create user by FID
+      let user = await this.userService.getByFid(voteData.fid);
+      if (!user) {
+        logger.log(
+          `👤 [INDEXER] User with FID ${voteData.fid} not found, creating placeholder`,
+        );
+        // Create a placeholder user for the vote
+        // Note: This user should be properly populated when they first log in
+        user = await this.userRepository.save({
+          fid: voteData.fid,
+          username: `user_${voteData.fid}`, // Placeholder username
+          photoUrl: '', // Will be populated on first login
+          address: voteData.voter,
+          banned: false,
+          powerups: 0,
+          points: 0,
+          verified: false,
+          createdAt: voteDate,
+          updatedAt: voteDate,
+        });
+        logger.log(`✅ [INDEXER] Created placeholder user: ${user.id}`);
+      }
+
+      // Verify brands exist
+      const [brand1, brand2, brand3] = await Promise.all([
+        this.brandRepository.findOne({ where: { id: voteData.brandIds[0] } }),
+        this.brandRepository.findOne({ where: { id: voteData.brandIds[1] } }),
+        this.brandRepository.findOne({ where: { id: voteData.brandIds[2] } }),
+      ]);
+
+      if (!brand1 || !brand2 || !brand3) {
+        const missingBrands = [];
+        if (!brand1) missingBrands.push(voteData.brandIds[0]);
+        if (!brand2) missingBrands.push(voteData.brandIds[1]);
+        if (!brand3) missingBrands.push(voteData.brandIds[2]);
+
+        logger.error(
+          `❌ [INDEXER] Missing brands: ${missingBrands.join(', ')}`,
+        );
+        throw new Error(`Brands not found: ${missingBrands.join(', ')}`);
+      }
+
+      // Check if vote already exists (prevent duplicates)
+      // First check by transaction hash for exact duplicate detection
+      const existingVoteByTx = await this.userBrandVotesRepository.findOne({
+        where: {
+          transactionHash: voteData.transactionHash,
+        },
+      });
+
+      if (existingVoteByTx) {
+        logger.log(
+          `⚠️ [INDEXER] Vote with transaction hash ${voteData.transactionHash} already exists, skipping`,
+        );
+        return;
+      }
+
+      // Then check if user already voted this day (business rule)
+      const dayStart = new Date(voteDate);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(voteDate);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const existingVoteByDay = await this.userBrandVotesRepository.findOne({
+        where: {
+          user: { id: user.id },
+          date: Between(dayStart, dayEnd),
+        },
+        relations: ['user'],
+      });
+
+      if (existingVoteByDay) {
+        logger.log(
+          `⚠️ [INDEXER] User ${user.id} already voted on ${voteDate.toDateString()}, skipping duplicate`,
+        );
+        return;
+      }
+
+      // Calculate reward amount (cost * 10)
+      const rewardAmount = (BigInt(voteData.cost) * BigInt(10)).toString();
+
+      // Calculate day from timestamp (block.timestamp / 86400)
+      const day = Math.floor(timestamp / 86400);
+
+      // Create the vote record (let TypeORM generate the UUID)
+      const vote = this.userBrandVotesRepository.create({
+        // Don't set id - let TypeORM generate UUID
+        user: { id: user.id },
+        brand1: { id: voteData.brandIds[0] },
+        brand2: { id: voteData.brandIds[1] },
+        brand3: { id: voteData.brandIds[2] },
+        date: voteDate,
+        shared: false, // Will be updated if user shares their vote
+        castHash: null, // Keep null for now, will be populated when user shares
+        transactionHash: voteData.transactionHash, // Store blockchain transaction hash
+        rewardAmount: rewardAmount, // Store reward amount (cost * 10)
+        day: day, // Store blockchain day
+        shareVerified: false, // Will be updated when user shares
+      });
+
+      await this.userBrandVotesRepository.save(vote);
+      logger.log(`✅ [INDEXER] Saved vote: ${voteData.id}`);
+
+      // Update brand scores (60, 30, 10 points for 1st, 2nd, 3rd place)
+      await Promise.all([
+        this.brandRepository.increment(
+          { id: voteData.brandIds[0] },
+          'score',
+          60,
+        ),
+        this.brandRepository.increment(
+          { id: voteData.brandIds[0] },
+          'scoreWeek',
+          60,
+        ),
+        this.brandRepository.increment(
+          { id: voteData.brandIds[0] },
+          'scoreMonth',
+          60,
+        ),
+        this.brandRepository.increment(
+          { id: voteData.brandIds[0] },
+          'stateScore',
+          60,
+        ),
+
+        this.brandRepository.increment(
+          { id: voteData.brandIds[1] },
+          'score',
+          30,
+        ),
+        this.brandRepository.increment(
+          { id: voteData.brandIds[1] },
+          'scoreWeek',
+          30,
+        ),
+        this.brandRepository.increment(
+          { id: voteData.brandIds[1] },
+          'scoreMonth',
+          30,
+        ),
+        this.brandRepository.increment(
+          { id: voteData.brandIds[1] },
+          'stateScore',
+          30,
+        ),
+
+        this.brandRepository.increment(
+          { id: voteData.brandIds[2] },
+          'score',
+          10,
+        ),
+        this.brandRepository.increment(
+          { id: voteData.brandIds[2] },
+          'scoreWeek',
+          10,
+        ),
+        this.brandRepository.increment(
+          { id: voteData.brandIds[2] },
+          'scoreMonth',
+          10,
+        ),
+        this.brandRepository.increment(
+          { id: voteData.brandIds[2] },
+          'stateScore',
+          10,
+        ),
+      ]);
+
+      logger.log(`✅ [INDEXER] Updated brand scores for vote: ${voteData.id}`);
+
+      // Update user calculated fields and add points
+      await this.userService.updateUserCalculatedFields(user.id);
+      await this.userService.addPoints(user.id, 3);
+
+      // Update user's last vote timestamp and day
+      await this.userRepository.update(user.id, {
+        lastVoteTimestamp: voteDate,
+        lastVoteDay: day,
+        totalVotes: user.totalVotes + 1,
+      });
+
+      logger.log(`✅ [INDEXER] Vote processing completed: ${voteData.id}`);
+    } catch (error) {
+      logger.error(`❌ [INDEXER] Error processing vote ${voteData.id}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handles brand creation/update from the Ponder indexer
+   */
+  async handleBrandSubmission(brandData: SubmitBrandDto): Promise<void> {
+    logger.log(`🏷️ [INDEXER] Processing brand submission: ${brandData.id}`);
+
+    try {
+      const blockNumber = parseInt(brandData.blockNumber);
+      const timestamp = parseInt(brandData.timestamp);
+      const createdAtTimestamp = parseInt(brandData.createdAt);
+      const createdAtDate = new Date(createdAtTimestamp * 1000);
+
+      logger.log(`🏷️ [INDEXER] Brand details:`, {
+        id: brandData.id,
+        fid: brandData.fid,
+        walletAddress: brandData.walletAddress,
+        handle: brandData.handle,
+        createdAt: createdAtDate.toISOString(),
+        blockNumber,
+        transactionHash: brandData.transactionHash,
+      });
+
+      // Check if brand already exists
+      const existingBrand = await this.brandRepository.findOne({
+        where: { id: brandData.id },
+      });
+
+      if (existingBrand) {
+        logger.log(
+          `📝 [INDEXER] Brand ${brandData.id} already exists, updating contract fields`,
+        );
+
+        // Update contract-specific fields
+        await this.brandRepository.update(
+          { id: brandData.id },
+          {
+            onChainFid: brandData.fid,
+            onChainHandle: brandData.handle,
+            walletAddress: brandData.walletAddress,
+            isUploadedToContract: true,
+            updatedAt: new Date(),
+          },
+        );
+
+        logger.log(`✅ [INDEXER] Updated existing brand: ${brandData.id}`);
+      } else {
+        logger.log(`🆕 [INDEXER] Creating new brand: ${brandData.id}`);
+
+        // Create new brand from contract data
+        // Note: This creates a minimal brand record - admin should populate full details later
+        const newBrand = this.brandRepository.create({
+          // Don't set id - it's auto-generated
+          name: brandData.handle, // Use handle as initial name
+          url: `https://warpcast.com/${brandData.handle}`, // Default URL
+          warpcastUrl: `https://warpcast.com/${brandData.handle}`, // Default warpcast URL
+          description: `Brand created from contract: ${brandData.handle}`,
+          imageUrl: '', // Will need to be populated later
+          followerCount: 0, // Will be populated when refreshed
+          score: 0,
+          scoreWeek: 0,
+          scoreMonth: 0,
+          stateScore: 0,
+          stateScoreWeek: 0,
+          stateScoreMonth: 0,
+          rankingWeek: 0,
+          rankingMonth: 0,
+          bonusPoints: 0,
+          ranking: '0',
+          banned: 0,
+          currentRanking: 0,
+          onChainFid: brandData.fid,
+          onChainHandle: brandData.handle,
+          walletAddress: brandData.walletAddress,
+          totalBrndAwarded: '0',
+          availableBrnd: '0',
+          onChainCreatedAt: createdAtDate,
+          metadataHash: brandData.handle, // Use handle as placeholder
+          isUploadedToContract: true,
+          createdAt: createdAtDate,
+          updatedAt: new Date(),
+          // These fields should be populated by admin later:
+          category: null, // ManyToOne relation
+          profile: '', // Will be populated later
+          channel: '', // Will be populated later
+          queryType: 1, // Default to profile type
+        });
+
+        await this.brandRepository.save(newBrand);
+        logger.log(`✅ [INDEXER] Created new brand: ${brandData.id}`);
+      }
+
+      logger.log(`✅ [INDEXER] Brand processing completed: ${brandData.id}`);
+    } catch (error) {
+      logger.error(
+        `❌ [INDEXER] Error processing brand ${brandData.id}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Handles reward claim submissions from the Ponder indexer
+   */
+  async handleRewardClaimSubmission(
+    claimData: SubmitRewardClaimDto,
+  ): Promise<void> {
+    logger.log(
+      `💰 [INDEXER] Processing reward claim submission: ${claimData.id}`,
+    );
+
+    try {
+      // Convert string values to appropriate types
+      const dayNumber = parseInt(claimData.day);
+      const blockNumber = parseInt(claimData.blockNumber);
+      const timestamp = parseInt(claimData.timestamp);
+      const claimDate = new Date(timestamp * 1000); // Convert Unix timestamp to Date
+
+      logger.log(`💰 [INDEXER] Reward claim details:`, {
+        id: claimData.id,
+        recipient: claimData.recipient,
+        fid: claimData.fid,
+        amount: claimData.amount,
+        day: dayNumber,
+        castHash: claimData.castHash,
+        caller: claimData.caller,
+        blockNumber,
+        transactionHash: claimData.transactionHash,
+        date: claimDate.toISOString(),
+      });
+
+      // Check if claim already exists (prevent duplicates by checking claimTxHash)
+      const existingClaim = await this.userBrandVotesRepository.findOne({
+        where: {
+          claimTxHash: claimData.transactionHash,
+        },
+      });
+
+      if (existingClaim) {
+        logger.log(
+          `⚠️ [INDEXER] Claim with transaction hash ${claimData.transactionHash} already exists, skipping`,
+        );
+        return;
+      }
+
+      // Find the corresponding UserBrandVotes record by user FID and day
+      const userVote = await this.userBrandVotesRepository.findOne({
+        where: {
+          user: { fid: claimData.fid },
+          day: dayNumber,
+        },
+        relations: ['user'],
+      });
+
+      if (userVote) {
+        // Update existing vote record with claim data
+        logger.log(
+          `📝 [INDEXER] Updating UserBrandVotes with reward claim data for FID ${claimData.fid}, day ${dayNumber}`,
+        );
+
+        await this.userBrandVotesRepository.update(
+          { id: userVote.id },
+          {
+            claimedAt: claimDate,
+            claimTxHash: claimData.transactionHash,
+            castHash: claimData.castHash,
+            shared: true,
+            shareVerified: true,
+            shareVerifiedAt: claimDate,
+          },
+        );
+
+        logger.log(`✅ [INDEXER] Updated UserBrandVotes: ${userVote.id}`);
+      } else {
+        // This shouldn't normally happen - claim should come after vote
+        // But create a placeholder record just in case
+        logger.warn(
+          `⚠️ [INDEXER] No existing vote found for FID ${claimData.fid}, day ${dayNumber}. Creating placeholder.`,
+        );
+
+        // Find or create user by FID
+        let user = await this.userService.getByFid(claimData.fid);
+        if (!user) {
+          logger.log(
+            `👤 [INDEXER] User with FID ${claimData.fid} not found, creating placeholder`,
+          );
+          user = await this.userRepository.save({
+            fid: claimData.fid,
+            username: `user_${claimData.fid}`,
+            photoUrl: '',
+            address: claimData.recipient,
+            banned: false,
+            powerups: 0,
+            points: 0,
+            verified: false,
+            createdAt: claimDate,
+            updatedAt: claimDate,
+          });
+        }
+
+        // Create placeholder vote record with claim data
+        const placeholderVote = this.userBrandVotesRepository.create({
+          user: { id: user.id },
+          // These will be null since we don't have vote data
+          brand1: null,
+          brand2: null,
+          brand3: null,
+          date: claimDate,
+          day: dayNumber,
+          rewardAmount: claimData.amount,
+          shared: true,
+          shareVerified: true,
+          shareVerifiedAt: claimDate,
+          castHash: claimData.castHash,
+          claimedAt: claimDate,
+          claimTxHash: claimData.transactionHash,
+          transactionHash: null, // This would be the vote transaction
+        });
+
+        await this.userBrandVotesRepository.save(placeholderVote);
+        logger.log(
+          `✅ [INDEXER] Created placeholder vote record: ${placeholderVote.id}`,
+        );
+      }
+
+      logger.log(
+        `✅ [INDEXER] Reward claim processing completed: ${claimData.id}`,
+      );
+    } catch (error) {
+      logger.error(
+        `❌ [INDEXER] Error processing reward claim ${claimData.id}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Handles user level update submissions from the Ponder indexer
+   */
+  async handleUserLevelUpdate(levelUpData: UpdateUserLevelDto): Promise<void> {
+    logger.log(
+      `📈 [INDEXER] Processing user level update: ${levelUpData.levelUpId}`,
+    );
+
+    try {
+      const timestamp = parseInt(levelUpData.timestamp);
+      const levelUpDate = new Date(timestamp * 1000);
+
+      logger.log(`📈 [INDEXER] Level-up details:`, {
+        fid: levelUpData.fid,
+        brndPowerLevel: levelUpData.brndPowerLevel,
+        wallet: levelUpData.wallet,
+        transactionHash: levelUpData.transactionHash,
+      });
+
+      // Find or create user by FID
+      let user = await this.userService.getByFid(levelUpData.fid);
+      if (!user) {
+        logger.log(
+          `👤 [INDEXER] User with FID ${levelUpData.fid} not found, creating placeholder`,
+        );
+        user = await this.userRepository.save({
+          fid: levelUpData.fid,
+          username: `user_${levelUpData.fid}`,
+          photoUrl: '',
+          address: levelUpData.wallet,
+          banned: false,
+          powerups: 0,
+          points: 0,
+          verified: false,
+          brndPowerLevel: levelUpData.brndPowerLevel,
+          createdAt: levelUpDate,
+          updatedAt: levelUpDate,
+        });
+        logger.log(`✅ [INDEXER] Created placeholder user: ${user.id}`);
+      } else {
+        // Update existing user's power level and wallet address
+        logger.log(
+          `📝 [INDEXER] Updating user ${user.id} power level from ${user.brndPowerLevel} to ${levelUpData.brndPowerLevel}`,
+        );
+
+        await this.userRepository.update(
+          { id: user.id },
+          {
+            brndPowerLevel: levelUpData.brndPowerLevel,
+            address: levelUpData.wallet,
+            updatedAt: levelUpDate,
+          },
+        );
+      }
+
+      logger.log(
+        `✅ [INDEXER] User level update completed: ${levelUpData.levelUpId}`,
+      );
+    } catch (error) {
+      logger.error(
+        `❌ [INDEXER] Error processing user level update ${levelUpData.levelUpId}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+}

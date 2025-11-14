@@ -19,9 +19,11 @@ import {
   UserBrandVotes,
   UserDailyActions,
   Category,
+  RewardClaim,
 } from '../../models';
 import { AuthModule } from '../auth/auth.module';
 import { BrandSchedulerService } from './services/brand-scheduler.service';
+import { BlockchainModule } from '../blockchain/blockchain.module';
 
 @Module({
   imports: [
@@ -32,8 +34,10 @@ import { BrandSchedulerService } from './services/brand-scheduler.service';
       UserBrandVotes,
       UserDailyActions,
       Category,
+      RewardClaim,
     ]),
     AuthModule,
+    BlockchainModule,
   ],
   controllers: [BrandController],
   providers: [

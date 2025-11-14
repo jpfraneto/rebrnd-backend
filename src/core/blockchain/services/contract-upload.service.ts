@@ -453,7 +453,7 @@ const CONTRACT_ABI = [
           { internalType: 'string', name: 'metadataHash', type: 'string' },
           { internalType: 'uint256', name: 'createdAt', type: 'uint256' },
         ],
-        internalType: 'struct StoriesInMotionV5.Brand',
+        internalType: 'struct StoriesInMotionV7.Brand',
         name: '',
         type: 'tuple',
       },
@@ -811,9 +811,28 @@ export class ContractUploadService {
 
   async resetUploadFlags(): Promise<void> {
     try {
-      logger.log('🔄 [CONTRACT] Resetting all upload flags for fresh contract deployment');
-      await this.brandRepository.update({}, { isUploadedToContract: false });
-      logger.log('✅ [CONTRACT] All brand upload flags reset');
+      logger.log(
+        '🔄 [CONTRACT] Resetting all upload flags for fresh contract deployment',
+      );
+
+      // Get all brand IDs first, then update with specific criteria
+      const brands = await this.brandRepository.find({
+        select: ['id'],
+        where: { isUploadedToContract: true },
+      });
+
+      if (brands.length > 0) {
+        const brandIds = brands.map((brand) => brand.id);
+        await this.brandRepository.update(
+          { id: In(brandIds) },
+          { isUploadedToContract: false },
+        );
+        logger.log(
+          `✅ [CONTRACT] Reset upload flags for ${brands.length} brands`,
+        );
+      } else {
+        logger.log('✅ [CONTRACT] No brands found with upload flags to reset');
+      }
     } catch (error) {
       logger.error('Error resetting upload flags:', error);
       throw error;
@@ -824,16 +843,21 @@ export class ContractUploadService {
     try {
       await this.brandRepository.update(
         { id: In(brandIds) },
-        { isUploadedToContract: true }
+        { isUploadedToContract: true },
       );
-      logger.log(`✅ [CONTRACT] Marked ${brandIds.length} brands as uploaded: [${brandIds.join(', ')}]`);
+      logger.log(
+        `✅ [CONTRACT] Marked ${brandIds.length} brands as uploaded: [${brandIds.join(', ')}]`,
+      );
     } catch (error) {
       logger.error('Error marking brands as uploaded:', error);
       throw error;
     }
   }
 
-  async uploadBrandsToContract(brands: ContractBrand[], resetFlags: boolean = true): Promise<UploadResult> {
+  async uploadBrandsToContract(
+    brands: ContractBrand[],
+    resetFlags: boolean = true,
+  ): Promise<UploadResult> {
     const results: UploadResult = {
       batchesProcessed: 0,
       successfulBrands: 0,
@@ -958,7 +982,7 @@ export class ContractUploadService {
           results.txHashes.push(receipt.transactionHash);
 
           // Mark brands as uploaded in database
-          const brandIds = batch.map(brand => brand.id);
+          const brandIds = batch.map((brand) => brand.id);
           await this.markBrandsAsUploaded(brandIds);
 
           // Increment nonce for next transaction
@@ -1026,7 +1050,7 @@ export class ContractUploadService {
       let brandCount = 0;
       let currentId = 1;
       let maxChecks = 1000; // Safety limit to avoid infinite loop
-      
+
       while (maxChecks > 0) {
         try {
           await publicClient.readContract({
@@ -1035,7 +1059,7 @@ export class ContractUploadService {
             functionName: 'getBrand',
             args: [currentId],
           } as any);
-          
+
           brandCount++;
           currentId++;
           maxChecks--;
@@ -1045,7 +1069,9 @@ export class ContractUploadService {
         }
       }
 
-      logger.log(`📊 [CONTRACT] Contract has ${brandCount} brands (checked up to ID ${currentId - 1})`);
+      logger.log(
+        `📊 [CONTRACT] Contract has ${brandCount} brands (checked up to ID ${currentId - 1})`,
+      );
       return brandCount;
     } catch (error) {
       logger.error('Error getting contract brand count:', error);
@@ -1066,7 +1092,9 @@ export class ContractUploadService {
 
   async getUploadedBrandCount(): Promise<number> {
     try {
-      const count = await this.brandRepository.count({ where: { isUploadedToContract: true } });
+      const count = await this.brandRepository.count({
+        where: { isUploadedToContract: true },
+      });
       logger.log(`📊 [DATABASE] Database has ${count} uploaded brands`);
       return count;
     } catch (error) {

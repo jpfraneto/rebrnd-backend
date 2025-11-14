@@ -17,6 +17,7 @@ import {
   UserDailyActions,
   NotificationQueue,
   AirdropScore,
+  RewardClaim,
 } from './models';
 
 @Module({
@@ -39,9 +40,10 @@ import {
         UserDailyActions,
         NotificationQueue,
         AirdropScore,
+        RewardClaim,
       ],
       // Important: Set synchronize to false in production for safety
-      synchronize: true,
+      synchronize: false, // Disabled due to existing database index conflicts
       //synchronize: !getConfig().isProduction,
       logging: false,
       // SSL configuration for DigitalOcean managed database

@@ -34,7 +34,7 @@ export default class NeynarService {
    * @returns Cast data from Neynar
    */
   async getCastByHash(castHash: string): Promise<Cast> {
-    const maxRetries = 3;
+    const maxRetries = 8;
     let attempts = 0;
 
     while (attempts < maxRetries) {

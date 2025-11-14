@@ -18,7 +18,7 @@ export interface PowerLevel {
   isActive: boolean;
   actionType: 'follow' | 'stake' | 'streak' | 'podiums' | 'collectibles';
   actionValue?: string;
-  progress?: { current: number; total: number };
+  progress?: { current: number; total: number; maxStreak?: number };
   showButton: boolean;
   requirement?: {
     type: string;
@@ -278,13 +278,14 @@ export class PowerLevelService {
         if (level.actionType === 'stake') {
           const requiredStake = level.requirement?.value as number;
           levelCopy.progress = {
-            current: achievements.stakedAmount,
+            current: Math.floor(achievements.stakedAmount),
             total: requiredStake,
           };
         } else if (level.actionType === 'streak') {
           levelCopy.progress = {
             current: achievements.dailyStreak,
             total: level.requirement?.value as number,
+            maxStreak: achievements.maxDailyStreak,
           };
         } else if (level.actionType === 'podiums') {
           levelCopy.progress = {
@@ -413,16 +414,82 @@ export class PowerLevelService {
   ): Promise<any> {
     const totalPodiums = user.userBrandVotes?.length || 0;
 
+    // Calculate maxDailyStreak if it's null
+    let maxDailyStreak = user.maxDailyStreak;
+    if (maxDailyStreak === null) {
+      maxDailyStreak = await this.calculateMaxStreakFromHistory(user);
+      // Update the user record with the calculated max streak
+      await this.userRepository.update(user.id, { maxDailyStreak });
+    }
+
     return {
       followingBrnd: followStatus.followingBrnd,
       followingFloc: followStatus.followingFloc,
-      stakedAmount: stakeInfo.stakedAmount,
-      totalBalance: stakeInfo.totalBalance,
+      stakedAmount: Math.floor(stakeInfo.stakedAmount),
+      totalBalance: Math.floor(stakeInfo.totalBalance),
       dailyStreak: user.dailyStreak || 0,
+      maxDailyStreak: maxDailyStreak || 0,
       totalPodiums: user.totalPodiums || totalPodiums,
       votedBrandsCount: user.votedBrandsCount || 0,
       collectibles: 0, // TODO: Implement collectibles counting
     };
+  }
+
+  private async calculateMaxStreakFromHistory(user: User): Promise<number> {
+    try {
+      // Get all user votes ordered by date
+      const votes = await this.userRepository
+        .createQueryBuilder('user')
+        .leftJoinAndSelect('user.userBrandVotes', 'votes')
+        .where('user.id = :userId', { userId: user.id })
+        .getOne();
+
+      if (!votes?.userBrandVotes || votes.userBrandVotes.length === 0) {
+        return Math.max(user.dailyStreak || 0, 0);
+      }
+
+      // Group votes by day and calculate max streak
+      const voteDates = votes.userBrandVotes
+        .map((vote) => {
+          const date = new Date(vote.date);
+          date.setHours(0, 0, 0, 0);
+          return date.getTime();
+        })
+        .sort((a, b) => b - a); // Most recent first
+
+      const uniqueDays = [...new Set(voteDates)].sort((a, b) => a - b); // Oldest first for streak calculation
+
+      if (uniqueDays.length === 0) {
+        return Math.max(user.dailyStreak || 0, 0);
+      }
+
+      let maxStreak = 0;
+      let currentStreak = 1;
+
+      for (let i = 1; i < uniqueDays.length; i++) {
+        const currentDay = uniqueDays[i];
+        const previousDay = uniqueDays[i - 1];
+        const dayDiff = (currentDay - previousDay) / (1000 * 60 * 60 * 24);
+
+        if (dayDiff === 1) {
+          // Consecutive day
+          currentStreak++;
+        } else {
+          // Gap in voting, update max and reset current
+          maxStreak = Math.max(maxStreak, currentStreak);
+          currentStreak = 1;
+        }
+      }
+
+      // Final check for the last streak
+      maxStreak = Math.max(maxStreak, currentStreak);
+
+      // Compare with current daily streak in case it's higher
+      return Math.max(maxStreak, user.dailyStreak || 0);
+    } catch (error) {
+      logger.error('Error calculating max streak from history:', error);
+      return Math.max(user.dailyStreak || 0, 0);
+    }
   }
 
   private isLevelCompleted(level: PowerLevel, achievements: any): boolean {
@@ -436,7 +503,7 @@ export class PowerLevelService {
 
       case 'streak':
         const requiredStreak = level.requirement?.value as number;
-        return achievements.dailyStreak >= requiredStreak;
+        return achievements.maxDailyStreak >= requiredStreak;
 
       case 'podiums':
         const requiredPodiums = level.requirement?.value as number;
@@ -488,9 +555,9 @@ export class PowerLevelService {
       case 'streak':
         const requiredStreak = level.requirement?.value as number;
         requirements.push({
-          met: achievements.dailyStreak >= requiredStreak,
-          description: `Maintain a ${requiredStreak}-day voting streak`,
-          current: achievements.dailyStreak,
+          met: achievements.maxDailyStreak >= requiredStreak,
+          description: `Achieve a ${requiredStreak}-day voting streak`,
+          current: achievements.maxDailyStreak,
           required: requiredStreak,
         });
         break;

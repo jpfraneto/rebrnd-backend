@@ -664,14 +664,21 @@ export class AdminController {
     @Res() res: Response,
   ) {
     const limit = body.limit || 20; // Default to 20 for testing
-    logger.log(`uploadLimitedBrandsToContract called - limit: ${limit} (no auth)`);
+    logger.log(
+      `uploadLimitedBrandsToContract called - limit: ${limit} (no auth)`,
+    );
 
     try {
-      logger.log(`Starting limited brand upload to contract (${limit} brands)...`);
+      logger.log(
+        `Starting limited brand upload to contract (${limit} brands)...`,
+      );
 
       // Get limited brands from database (non-uploaded only)
-      const brands = await this.contractUploadService.getAllBrandsForContract(limit);
-      logger.log(`Found ${brands.length} non-uploaded brands (requesting ${limit})`);
+      const brands =
+        await this.contractUploadService.getAllBrandsForContract(limit);
+      logger.log(
+        `Found ${brands.length} non-uploaded brands (requesting ${limit})`,
+      );
 
       if (brands.length === 0) {
         return hasResponse(res, {
@@ -689,8 +696,9 @@ export class AdminController {
       }
 
       // Validate brands
-      const validation = this.contractUploadService.validateBrandsForContract(brands);
-      
+      const validation =
+        this.contractUploadService.validateBrandsForContract(brands);
+
       if (!validation.valid) {
         logger.error('Brand validation failed:', validation.issues);
         return hasError(
@@ -704,7 +712,10 @@ export class AdminController {
       logger.log('✅ Brand validation passed');
 
       // Upload to contract (don't reset flags - incremental upload)
-      const result = await this.contractUploadService.uploadBrandsToContract(brands, false);
+      const result = await this.contractUploadService.uploadBrandsToContract(
+        brands,
+        false,
+      );
 
       const summary = {
         totalBrands: brands.length,
@@ -716,7 +727,10 @@ export class AdminController {
       };
 
       if (result.errors.length > 0) {
-        logger.error('Some batches failed during limited upload:', result.errors);
+        logger.error(
+          'Some batches failed during limited upload:',
+          result.errors,
+        );
       }
 
       const success = result.successfulBrands > 0;
@@ -749,18 +763,22 @@ export class AdminController {
     logger.log(`getBrandUploadStatus called (no auth)`);
 
     try {
-      const totalBrands = await this.contractUploadService.getDatabaseBrandCount();
-      const uploadedCount = await this.contractUploadService.getUploadedBrandCount();
+      const totalBrands =
+        await this.contractUploadService.getDatabaseBrandCount();
+      const uploadedCount =
+        await this.contractUploadService.getUploadedBrandCount();
       const remainingCount = totalBrands - uploadedCount;
 
       return hasResponse(res, {
         totalBrands,
         uploadedBrands: uploadedCount,
         remainingBrands: remainingCount,
-        uploadProgress: totalBrands > 0 ? Math.round((uploadedCount / totalBrands) * 100) : 0,
-        message: remainingCount > 0 
-          ? `${remainingCount} brands remaining to upload`
-          : 'All brands are uploaded to contract',
+        uploadProgress:
+          totalBrands > 0 ? Math.round((uploadedCount / totalBrands) * 100) : 0,
+        message:
+          remainingCount > 0
+            ? `${remainingCount} brands remaining to upload`
+            : 'All brands are uploaded to contract',
       });
     } catch (error) {
       logger.error('Error getting brand upload status:', error);
@@ -782,7 +800,8 @@ export class AdminController {
 
     try {
       await this.contractUploadService.resetUploadFlags();
-      const totalBrands = await this.contractUploadService.getDatabaseBrandCount();
+      const totalBrands =
+        await this.contractUploadService.getDatabaseBrandCount();
 
       return hasResponse(res, {
         success: true,

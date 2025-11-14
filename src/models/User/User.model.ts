@@ -80,6 +80,12 @@ export class User {
   dailyStreak: number;
 
   @Column({
+    default: null,
+    nullable: true,
+  })
+  maxDailyStreak: number;
+
+  @Column({
     default: 0,
   })
   totalPodiums: number;
@@ -103,6 +109,31 @@ export class User {
     default: 0,
   })
   lastVoteDay: number;
+
+  @Column({
+    nullable: true,
+  })
+  lastVoteTimestamp: Date;
+
+  @Column({
+    nullable: true,
+  })
+  address: string;
+
+  @Column({
+    default: false,
+  })
+  banned: boolean;
+
+  @Column({
+    default: 0,
+  })
+  powerups: number;
+
+  @Column({
+    default: false,
+  })
+  verified: boolean;
 
   @ManyToOne(() => Brand, {
     nullable: true,

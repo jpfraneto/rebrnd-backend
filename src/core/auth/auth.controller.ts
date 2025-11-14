@@ -1,13 +1,5 @@
 // Dependencies
-import {
-  Body,
-  Controller,
-  Get,
-  Post,
-  Req,
-  Res,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
@@ -66,21 +58,12 @@ export class AuthController {
     try {
       logger.log('Processing user profile request for FID:', session.sub);
 
-      // Existing user lookup logic - don't change
-      let user = await this.userService.getByFid(session.sub, [
-        'id',
-        'fid',
-        'username',
-        'photoUrl',
-        'points',
-        'createdAt',
-        'updatedAt',
-      ]);
-
+      // Check if user exists first
+      let user = await this.userService.getByFid(session.sub);
       let isNewUser = false;
 
       if (!user) {
-        // Existing user creation logic - don't change
+        // Create new user if doesn't exist
         logger.log('Creating new user record for FID:', session.sub);
         const neynar = new NeynarService();
         const neynarUser = await neynar.getUserByFid(session.sub);
@@ -91,6 +74,11 @@ export class AuthController {
             username: neynarUser.username,
             photoUrl: neynarUser.pfp_url,
             points: 0,
+            brndPowerLevel: 1, // Default power level
+            address: null,
+            banned: false,
+            powerups: 0,
+            verified: false,
             createdAt: new Date(),
             updatedAt: new Date(),
           },
@@ -100,46 +88,72 @@ export class AuthController {
         isNewUser = isCreated;
       }
 
-      // Existing voting status logic - don't change
-      const unixDate = Math.floor(Date.now() / 1000);
-      const votesToday = await this.userService.getUserVotes(user.id, unixDate);
-      const hasVotedToday = !!votesToday;
+      // Get comprehensive user data with all precise information
+      const userData = await this.userService.getComprehensiveUserData(
+        session.sub,
+      );
 
+      // Get today's vote with brands for backward compatibility
       let todaysVote = null;
-      let hasSharedToday = false;
-      if (hasVotedToday && votesToday) {
+      if (userData.votedToday && userData.todaysVoteStatus?.voteId) {
         try {
-          // If getUserVotes already returned vote data, use it
-          // Otherwise, try to get it with relations
-          if (votesToday.brand1 && votesToday.brand2 && votesToday.brand3) {
-            todaysVote = votesToday; // Already has full data
-          } else {
-            // Get vote with brand relations
-            todaysVote = await this.userService.getTodaysVoteWithBrands(
-              user.id,
-            );
-          }
-
-          // NEW: Check if today's vote has been shared
-          if (todaysVote) {
-            hasSharedToday = todaysVote.shared || false;
-          }
+          todaysVote = await this.userService.getTodaysVoteWithBrands(user.id);
         } catch (error) {
           logger.warn("Could not fetch today's vote details:", error);
-          // Continue without vote data - don't break /me endpoint
         }
       }
 
-      // Existing response format + new field
+      // Comprehensive response with all precise user data
       const responseData = {
-        fid: user.fid.toString(),
-        username: user.username,
-        photoUrl: user.photoUrl,
-        points: user.points,
-        createdAt: user.createdAt,
-        hasVotedToday,
-        hasSharedToday,
+        // Basic user info
+        fid: userData.user.fid.toString(),
+        username: userData.user.username,
+        photoUrl: userData.user.photoUrl,
+        address: userData.user.address,
+        banned: userData.user.banned,
+        verified: userData.user.verified,
+        powerups: userData.user.powerups,
+
+        // Points and levels
+        points: userData.points,
+        brndPowerLevel: userData.brndPowerLevel,
+        leaderboardPosition: userData.leaderboardPosition,
+
+        // Activity tracking
+        lastVoteTimestamp: userData.lastVoteTimestamp,
+        dailyStreak: userData.dailyStreak,
+        totalPodiums: userData.totalPodiums,
+        totalVotes: userData.user.totalVotes,
+        votedBrandsCount: userData.votedBrandsCount,
+
+        // Today's precise status (boolean flags)
+        votedToday: userData.votedToday,
+        sharedVoteToday: userData.sharedVoteToday,
+        claimedRewardsToday: userData.claimedRewardsToday,
+
+        // Contextual transaction data based on user's daily state
+        contextualTransaction: userData.contextualTransaction,
+
+        // Detailed today's vote status
+        todaysVoteStatus: userData.todaysVoteStatus,
+
+        // Legacy fields for backward compatibility
+        hasVotedToday: userData.votedToday,
+        hasSharedToday: userData.sharedVoteToday,
         todaysVote,
+
+        // Favorite brand
+        favoriteBrand: userData.favoriteBrand
+          ? {
+              id: userData.favoriteBrand.id,
+              name: userData.favoriteBrand.name,
+              imageUrl: userData.favoriteBrand.imageUrl,
+            }
+          : null,
+
+        // Meta
+        createdAt: userData.user.createdAt,
+        updatedAt: userData.user.updatedAt,
         isNewUser,
       };
 

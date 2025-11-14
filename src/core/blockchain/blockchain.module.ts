@@ -8,28 +8,50 @@ import { SignatureService } from './services/signature.service';
 import { RewardService } from './services/reward.service';
 import { CastVerificationService } from './services/cast-verification.service';
 import { ContractUploadService } from './services/contract-upload.service';
+import { IndexerService } from './services/indexer.service';
+import { UserService } from '../user/services';
+import { BrandService } from '../brand/services';
 import { AuthModule } from '../auth/auth.module';
 
-import { User, RewardClaim, Brand } from '../../models';
+import {
+  User,
+  Brand,
+  UserBrandVotes,
+  UserDailyActions,
+  Category,
+} from '../../models';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, RewardClaim, Brand]), AuthModule],
+  imports: [
+    TypeOrmModule.forFeature([
+      User,
+      Brand,
+      UserBrandVotes,
+      UserDailyActions,
+      Category,
+    ]),
+    AuthModule,
+  ],
   controllers: [BlockchainController],
   providers: [
-    BlockchainService, 
-    PowerLevelService, 
-    SignatureService, 
-    RewardService, 
+    BlockchainService,
+    PowerLevelService,
+    SignatureService,
+    RewardService,
     CastVerificationService,
-    ContractUploadService
+    ContractUploadService,
+    IndexerService,
+    UserService,
+    BrandService,
   ],
   exports: [
-    BlockchainService, 
-    PowerLevelService, 
-    SignatureService, 
-    RewardService, 
+    BlockchainService,
+    PowerLevelService,
+    SignatureService,
+    RewardService,
     CastVerificationService,
-    ContractUploadService
+    ContractUploadService,
+    IndexerService,
   ],
 })
 export class BlockchainModule {}

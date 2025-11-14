@@ -675,6 +675,62 @@ export class UserService {
   }
 
   /**
+   * Gets the current vote status for today including vote, share, and claim status.
+   *
+   * @param userFid - The user's Farcaster ID
+   * @returns Today's vote status or null if user hasn't voted today
+   */
+  async getTodaysVoteStatus(userFid: number): Promise<{
+    hasVoted: boolean;
+    hasShared: boolean;
+    hasClaimed: boolean;
+    voteId: string | null;
+    castHash: string | null;
+    transactionHash: string | null;
+    day: number;
+  } | null> {
+    try {
+      // Calculate today's day number (unix timestamp / 86400)
+      const now = Math.floor(Date.now() / 1000);
+      const day = Math.floor(now / 86400);
+
+      // Look up today's vote for this user
+      const vote = await this.userBrandVotesRepository.findOne({
+        where: {
+          user: { fid: userFid },
+          day: day,
+        },
+        relations: ['user'],
+      });
+
+      if (!vote) {
+        return null; // No vote today
+      }
+
+      // Determine status
+      const hasVoted = true;
+      const hasShared = !!(vote.castHash && vote.shared);
+      const hasClaimed = !!vote.claimedAt;
+
+      return {
+        hasVoted,
+        hasShared,
+        hasClaimed,
+        voteId: vote.id,
+        castHash: vote.castHash,
+        transactionHash: vote.transactionHash,
+        day: vote.day,
+      };
+    } catch (error) {
+      console.error(
+        "❌ [UserService] Error getting today's vote status:",
+        error,
+      );
+      throw new Error('Failed to retrieve vote status');
+    }
+  }
+
+  /**
    * Refreshes the leaderboard cache if it's stale or doesn't exist.
    *
    * @private
@@ -914,11 +970,17 @@ export class UserService {
           this.calculateFavoriteBrand(userId),
         ]);
 
+      // Get current user to check maxDailyStreak
+      const user = await this.userRepository.findOne({ where: { id: userId } });
+      const currentMaxStreak = user?.maxDailyStreak ?? 0;
+      const newMaxStreak = Math.max(currentMaxStreak, dailyStreak);
+
       await this.userRepository.update(userId, {
         dailyStreak,
         totalPodiums,
         votedBrandsCount,
         favoriteBrand,
+        maxDailyStreak: newMaxStreak,
       });
 
       logger.log(`Updated calculated fields for user ${userId}`);
@@ -954,6 +1016,168 @@ export class UserService {
       logger.log(`Backfill completed! Processed ${processed} users`);
     } catch (error) {
       logger.error('Error during backfill:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Gets contextual transaction data based on user's daily state
+   * Logic:
+   * - If user hasn't voted: return null
+   * - If user voted but hasn't shared: return vote transaction hash
+   * - If user voted and shared but not claimed: return null (no tx to show)
+   * - If user voted, shared, and claimed: return claim transaction hash + amount + cast hash
+   */
+  async getContextualTransactionData(fid: number): Promise<{
+    transactionHash: string | null;
+    transactionType: 'vote' | 'claim' | null;
+    rewardAmount?: string;
+    castHash?: string;
+    day?: number;
+  }> {
+    try {
+      // Calculate today's day number
+      const now = Math.floor(Date.now() / 1000);
+      const day = Math.floor(now / 86400);
+
+      // Get today's vote record
+      const vote = await this.userBrandVotesRepository.findOne({
+        where: {
+          user: { fid: fid },
+          day: day,
+        },
+        relations: ['user'],
+      });
+
+      if (!vote) {
+        // User hasn't voted today
+        return {
+          transactionHash: null,
+          transactionType: null,
+        };
+      }
+
+      const hasVoted = true;
+      const hasShared = !!(vote.castHash && vote.shared);
+      const hasClaimed = !!vote.claimedAt;
+
+      if (hasVoted && !hasShared) {
+        // User voted but hasn't shared - show vote transaction
+        return {
+          transactionHash: vote.transactionHash,
+          transactionType: 'vote',
+          day: vote.day,
+        };
+      } else if (hasVoted && hasShared && !hasClaimed) {
+        // User voted and shared but not claimed - show no transaction
+        return {
+          transactionHash: null,
+          transactionType: null,
+        };
+      } else if (hasVoted && hasShared && hasClaimed) {
+        // User voted, shared, and claimed - show claim transaction, amount, and cast hash
+        return {
+          transactionHash: vote.claimTxHash,
+          transactionType: 'claim',
+          rewardAmount: vote.rewardAmount,
+          castHash: vote.castHash,
+          day: vote.day,
+        };
+      }
+
+      // Fallback - shouldn't reach here
+      return {
+        transactionHash: null,
+        transactionType: null,
+      };
+    } catch (error) {
+      logger.error('Error getting contextual transaction data:', error);
+      return {
+        transactionHash: null,
+        transactionType: null,
+      };
+    }
+  }
+
+  /**
+   * Gets comprehensive user data with precise activity status for today
+   */
+  async getComprehensiveUserData(fid: number): Promise<{
+    user: User;
+    brndPowerLevel: number;
+    lastVoteTimestamp: Date | null;
+    votedToday: boolean;
+    sharedVoteToday: boolean;
+    claimedRewardsToday: boolean;
+    dailyStreak: number;
+    totalPodiums: number;
+    votedBrandsCount: number;
+    points: number;
+    leaderboardPosition: number;
+    favoriteBrand: Brand | null;
+    todaysVoteStatus: {
+      hasVoted: boolean;
+      hasShared: boolean;
+      hasClaimed: boolean;
+      voteId: string | null;
+      castHash: string | null;
+      transactionHash: string | null;
+      day: number;
+    } | null;
+    contextualTransaction: {
+      transactionHash: string | null;
+      transactionType: 'vote' | 'claim' | null;
+      rewardAmount?: string;
+      castHash?: string;
+      day?: number;
+    };
+  }> {
+    try {
+      // Get user with all relations
+      const user = await this.userRepository.findOne({
+        where: { fid },
+        relations: ['favoriteBrand'],
+      });
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Get today's vote status and contextual transaction data
+      const [todaysVoteStatus, contextualTransaction] = await Promise.all([
+        this.getTodaysVoteStatus(fid),
+        this.getContextualTransactionData(fid),
+      ]);
+
+      // Calculate precise boolean flags
+      const votedToday = todaysVoteStatus?.hasVoted || false;
+      const sharedVoteToday = todaysVoteStatus?.hasShared || false;
+      const claimedRewardsToday = todaysVoteStatus?.hasClaimed || false;
+
+      // Get leaderboard position
+      await this.refreshLeaderboardCacheIfNeeded();
+      const userIndex =
+        this.leaderboardCache?.users.findIndex((u) => u.fid === fid) ?? -1;
+      const leaderboardPosition = userIndex !== -1 ? userIndex + 1 : 0;
+
+      return {
+        user,
+        brndPowerLevel: user.brndPowerLevel,
+        lastVoteTimestamp: user.lastVoteTimestamp,
+        votedToday,
+        sharedVoteToday,
+        claimedRewardsToday,
+        dailyStreak: user.dailyStreak,
+        totalPodiums: user.totalPodiums,
+        votedBrandsCount: user.votedBrandsCount,
+        points: user.points,
+        leaderboardPosition,
+        favoriteBrand: user.favoriteBrand,
+        todaysVoteStatus,
+        contextualTransaction,
+      };
+    } catch (error) {
+      logger.error('Error getting comprehensive user data:', error);
       throw error;
     }
   }

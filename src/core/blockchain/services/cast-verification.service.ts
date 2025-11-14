@@ -31,7 +31,13 @@ interface ShareDetectionResult {
 
 @Injectable()
 export class CastVerificationService {
-  private readonly VOTING_KEYWORDS = ['voted', 'podium', 'brnd', 'cast your vote', 'top brands'];
+  private readonly VOTING_KEYWORDS = [
+    'voted',
+    'podium',
+    'brnd',
+    'cast your vote',
+    'top brands',
+  ];
   private readonly SHARE_DETECTION_WINDOW_HOURS = 24;
 
   constructor(
@@ -44,7 +50,9 @@ export class CastVerificationService {
 
   async processCastWebhook(payload: CastWebhookPayload): Promise<boolean> {
     try {
-      logger.log(`📱 [CAST] Processing cast webhook for FID: ${payload.data.author.fid}`);
+      logger.log(
+        `📱 [CAST] Processing cast webhook for FID: ${payload.data.author.fid}`,
+      );
 
       const shareDetection = await this.isVotingShare(payload);
       if (!shareDetection.isVotingShare) {
@@ -59,7 +67,9 @@ export class CastVerificationService {
       // Verify share authenticity
       const isAuthentic = await this.verifyShareAuthenticity(fid, day, payload);
       if (!isAuthentic) {
-        logger.log(`❌ [CAST] Share authenticity verification failed for FID: ${fid}`);
+        logger.log(
+          `❌ [CAST] Share authenticity verification failed for FID: ${fid}`,
+        );
         return false;
       }
 
@@ -71,7 +81,9 @@ export class CastVerificationService {
       );
 
       if (verified) {
-        logger.log(`✅ [CAST] Share verified and marked for rewards - FID: ${fid}, Day: ${day}`);
+        logger.log(
+          `✅ [CAST] Share verified and marked for rewards - FID: ${fid}, Day: ${day}`,
+        );
       }
 
       return verified;
@@ -84,10 +96,10 @@ export class CastVerificationService {
   async isVotingShare(cast: CastWebhookPayload): Promise<ShareDetectionResult> {
     try {
       const text = cast.data.text.toLowerCase();
-      
+
       // Check for voting-related keywords
-      const hasVotingKeywords = this.VOTING_KEYWORDS.some(keyword => 
-        text.includes(keyword.toLowerCase())
+      const hasVotingKeywords = this.VOTING_KEYWORDS.some((keyword) =>
+        text.includes(keyword.toLowerCase()),
       );
 
       if (!hasVotingKeywords) {
@@ -96,7 +108,7 @@ export class CastVerificationService {
 
       // Extract potential brand mentions
       const extractedInfo = await this.extractVotingInfo(cast);
-      
+
       return {
         isVotingShare: true,
         day: extractedInfo.day,
@@ -117,18 +129,20 @@ export class CastVerificationService {
     try {
       const castTimestamp = new Date(cast.data.timestamp);
       const day = Math.floor(castTimestamp.getTime() / (1000 * 60 * 60 * 24));
-      
+
       const text = cast.data.text.toLowerCase();
-      
+
       // Try to extract brand mentions from the cast
       const brands = await this.brandRepository.find();
-      const mentionedBrands = brands.filter(brand => 
-        text.includes(brand.name.toLowerCase()) || 
-        (brand.onChainHandle && text.includes(brand.onChainHandle.toLowerCase()))
+      const mentionedBrands = brands.filter(
+        (brand) =>
+          text.includes(brand.name.toLowerCase()) ||
+          (brand.onChainHandle &&
+            text.includes(brand.onChainHandle.toLowerCase())),
       );
 
-      const brandIds = mentionedBrands.slice(0, 3).map(brand => brand.id);
-      
+      const brandIds = mentionedBrands.slice(0, 3).map((brand) => brand.id);
+
       return {
         day,
         brandIds: brandIds.length > 0 ? brandIds : undefined,
@@ -150,7 +164,9 @@ export class CastVerificationService {
   ): Promise<boolean> {
     try {
       // Check if user actually voted on this day
-      const user = await this.userRepository.findOne({ where: { fid: userFid } });
+      const user = await this.userRepository.findOne({
+        where: { fid: userFid },
+      });
       if (!user) {
         logger.log(`❌ [CAST] User not found for FID: ${userFid}`);
         return false;
@@ -159,15 +175,18 @@ export class CastVerificationService {
       // Verify that user voted on this day (or close to it)
       const dayDifference = Math.abs(user.lastVoteDay - day);
       if (dayDifference > 1) {
-        logger.log(`❌ [CAST] User hasn't voted recently - FID: ${userFid}, Last vote day: ${user.lastVoteDay}, Share day: ${day}`);
+        logger.log(
+          `❌ [CAST] User hasn't voted recently - FID: ${userFid}, Last vote day: ${user.lastVoteDay}, Share day: ${day}`,
+        );
         return false;
       }
 
       // Check timing - cast should be within reasonable time after voting
       const castTime = new Date(cast.data.timestamp);
       const currentTime = new Date();
-      const hoursDifference = (currentTime.getTime() - castTime.getTime()) / (1000 * 60 * 60);
-      
+      const hoursDifference =
+        (currentTime.getTime() - castTime.getTime()) / (1000 * 60 * 60);
+
       if (hoursDifference > this.SHARE_DETECTION_WINDOW_HOURS) {
         logger.log(`❌ [CAST] Cast is too old - ${hoursDifference} hours ago`);
         return false;
@@ -183,7 +202,10 @@ export class CastVerificationService {
       logger.log(`✅ [CAST] Share authenticity verified for FID: ${userFid}`);
       return true;
     } catch (error) {
-      logger.error(`Error verifying share authenticity for FID ${userFid}:`, error);
+      logger.error(
+        `Error verifying share authenticity for FID ${userFid}:`,
+        error,
+      );
       return false;
     }
   }
@@ -198,21 +220,29 @@ export class CastVerificationService {
       'brand ranking',
       'today i voted',
     ];
-    
-    return votingPhrases.some(phrase => text.includes(phrase));
+
+    return votingPhrases.some((phrase) => text.includes(phrase));
   }
 
-  async manuallyVerifyShare(castHash: string, userFid: number, day: number): Promise<{
+  async manuallyVerifyShare(
+    castHash: string,
+    userFid: number,
+    day: number,
+  ): Promise<{
     verified: boolean;
     rewardAmount?: string;
     canClaimNow?: boolean;
   }> {
     try {
-      logger.log(`🔍 [CAST] Manual verification for cast: ${castHash}, FID: ${userFid}, Day: ${day}`);
+      logger.log(
+        `🔍 [CAST] Manual verification for cast: ${castHash}, FID: ${userFid}, Day: ${day}`,
+      );
 
       // In a real implementation, you would fetch the cast from Farcaster API
       // For now, we'll verify based on user's voting status
-      const user = await this.userRepository.findOne({ where: { fid: userFid } });
+      const user = await this.userRepository.findOne({
+        where: { fid: userFid },
+      });
       if (!user) {
         return { verified: false };
       }
@@ -223,10 +253,16 @@ export class CastVerificationService {
       }
 
       // Mark as verified
-      const verified = await this.rewardService.verifyShareForReward(userFid, day, castHash);
-      
+      const verified = await this.rewardService.verifyShareForReward(
+        userFid,
+        day,
+        castHash,
+      );
+
       if (verified) {
-        const rewardAmount = this.rewardService.calculateRewardAmount(user.brndPowerLevel);
+        const rewardAmount = this.rewardService.calculateRewardAmount(
+          user.brndPowerLevel,
+        );
         return {
           verified: true,
           rewardAmount,
@@ -241,7 +277,10 @@ export class CastVerificationService {
     }
   }
 
-  async getShareStatus(userFid: number, day: number): Promise<{
+  async getShareStatus(
+    userFid: number,
+    day: number,
+  ): Promise<{
     hasShared: boolean;
     sharedAt?: string;
     castHash?: string;
@@ -250,8 +289,11 @@ export class CastVerificationService {
     try {
       // This would typically query your reward claims table
       // For now, return basic status
-      const eligibility = await this.rewardService.validateRewardEligibility(userFid, day);
-      
+      const eligibility = await this.rewardService.validateRewardEligibility(
+        userFid,
+        day,
+      );
+
       return {
         hasShared: eligibility.hasShared,
         verified: eligibility.hasShared,

@@ -8,6 +8,7 @@ import { EmbedsModule } from './embeds/embeds.module';
 import { AdminModule } from './admin/admin.module';
 import { AirdropModule } from './airdrop/airdrop.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
+import { DailyModule } from './daily/daily.module';
 
 const CoreModules = [
   UserModule,
@@ -19,6 +20,7 @@ const CoreModules = [
   AdminModule,
   AirdropModule,
   BlockchainModule,
+  DailyModule,
 ];
 
 export default CoreModules;

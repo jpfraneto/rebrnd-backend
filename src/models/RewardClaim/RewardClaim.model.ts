@@ -21,7 +21,7 @@ export class RewardClaim {
   @Column()
   day: number;
 
-  @Column({ type: 'decimal', precision: 36, scale: 18 })
+  @Column({ type: 'decimal', precision: 64, scale: 18, nullable: true })
   amount: string;
 
   @Column({ nullable: true })

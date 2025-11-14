@@ -3,7 +3,6 @@ import {
   Body,
   Controller,
   Get,
-  Logger,
   Param,
   Post,
   Query,
@@ -19,6 +18,7 @@ import { Response } from 'express';
 import { BrandOrderType, BrandResponse, BrandService } from './services';
 import { BrandSeederService } from './services/brand-seeding.service';
 import { UserService } from '../user/services/user.service';
+import { RewardService } from '../blockchain/services/reward.service';
 
 // Models
 import { Brand, CurrentUser } from '../../models';
@@ -40,6 +40,7 @@ export class BrandController {
     private readonly brandService: BrandService,
     private readonly brandSeederService: BrandSeederService,
     private readonly userService: UserService,
+    private readonly rewardService: RewardService,
   ) {}
 
   /**
@@ -142,8 +143,8 @@ export class BrandController {
       }
 
       // Check if requester has permission (brand owner FID or wallet address)
-      const hasPermission = 
-        brand.onChainFid === session.sub || 
+      const hasPermission =
+        brand.onChainFid === session.sub ||
         brand.walletAddress?.toLowerCase() === requesterAddress.toLowerCase();
 
       if (!hasPermission) {
@@ -164,9 +165,10 @@ export class BrandController {
         walletAddress: brand.walletAddress,
         requesterAddress,
         canWithdraw: parseFloat(brand.availableBrnd) > 0,
-        message: parseFloat(brand.availableBrnd) > 0 
-          ? 'Withdrawal can be initiated on-chain' 
-          : 'No rewards available for withdrawal',
+        message:
+          parseFloat(brand.availableBrnd) > 0
+            ? 'Withdrawal can be initiated on-chain'
+            : 'No rewards available for withdrawal',
       });
     } catch (error) {
       logger.error('Failed to initiate brand withdrawal:', error);
@@ -356,7 +358,7 @@ export class BrandController {
    *
    * @param user - The authenticated user from QuickAuth
    * @param castHash - The Farcaster cast hash to verify (0x format)
-   * @param voteId - The ID of the vote being shared
+   * @param transactionHash - The transaction hash of the vote being shared
    * @param res - The response object
    * @returns Verification result and updated user points
    */
@@ -364,7 +366,18 @@ export class BrandController {
   @UseGuards(AuthorizationGuard)
   async verifyShare(
     @Session() user: QuickAuthPayload,
-    @Body() { castHash, voteId }: { castHash: string; voteId: string },
+    @Body()
+    {
+      castHash,
+      voteId,
+      recipientAddress,
+      transactionHash,
+    }: {
+      castHash: string;
+      voteId: string;
+      recipientAddress?: string;
+      transactionHash?: string;
+    },
     @Res() res: Response,
   ): Promise<Response> {
     try {
@@ -373,16 +386,41 @@ export class BrandController {
       );
 
       // Validate input
-      if (!castHash || !voteId) {
+      if (!voteId) {
         return hasError(
           res,
           HttpStatus.BAD_REQUEST,
           'verifyShare',
-          'Cast hash and vote ID are required',
+          'Vote ID is required',
         );
       }
 
-      // Validate cast hash format (should start with 0x and be 66 characters)
+      // Check if this is a request to retrieve claim signature for already shared vote
+      const isClaimRetrieval = !castHash || castHash.trim() === '';
+
+      if (isClaimRetrieval) {
+        console.log(
+          '🔄 [VerifyShare] Handling claim retrieval for already shared vote',
+        );
+        return await this.handleClaimRetrieval(
+          user,
+          voteId,
+          recipientAddress,
+          res,
+        );
+      }
+
+      // Validate recipient address if provided
+      if (recipientAddress && !/^0x[a-fA-F0-9]{40}$/.test(recipientAddress)) {
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'verifyShare',
+          'Invalid recipient address format',
+        );
+      }
+
+      // Validate cast hash format (should start with 0x and be 40 characters)
       if (!/^0x[a-fA-F0-9]{40}$/.test(castHash)) {
         return hasError(
           res,
@@ -404,8 +442,14 @@ export class BrandController {
         );
       }
 
+      console.log('DB USER', dbUser);
+
       // Get the vote and check if it belongs to the user
-      const vote = await this.brandService.getVoteById(voteId);
+      const vote = await this.brandService.getVoteByTransactionHash(
+        transactionHash as string,
+      );
+
+      console.log('VOTE', vote);
       if (!vote) {
         return hasError(
           res,
@@ -449,12 +493,15 @@ export class BrandController {
         }
 
         // Verify the cast contains the correct embed URL
-        const expectedEmbedUrl = `https://brnd.land`;
+        // Accept both brnd.land or rebrnd.lat as valid base URLs in the embed
+        const validEmbedUrls = ['https://brnd.land', 'https://rebrnd.lat'];
 
-        // Find embed that matches our URL and has the url property
+        // Find embed that matches any of our valid URLs and has the url property
         const correctEmbedIndex = castData.embeds.findIndex((embed) => {
           if ('url' in embed) {
-            return embed.url.includes(expectedEmbedUrl);
+            return validEmbedUrls.some((baseUrl) =>
+              embed.url.includes(baseUrl),
+            );
           }
           return false;
         });
@@ -471,25 +518,103 @@ export class BrandController {
         // We know this embed has the url property since we checked above
         const correctEmbed = castData.embeds[correctEmbedIndex] as any;
         const correctEmbedUrl = correctEmbed.url;
-        const voteIdFromQueryParam = correctEmbedUrl.split('?voteId=')[1];
-        if (voteId !== voteIdFromQueryParam) {
+        const transactionHashFromQueryParam =
+          correctEmbedUrl.split('?txHash=')[1];
+        if (vote.transactionHash !== transactionHashFromQueryParam) {
           return hasError(
             res,
             HttpStatus.BAD_REQUEST,
             'verifyShare',
-            'Cast does not contain the correct vote ID',
+            'Cast does not contain the correct tx hash',
           );
         }
 
         // All verifications passed - update vote and award points
-        await this.brandService.markVoteAsShared(voteId, castHash);
+        await this.brandService.markVoteAsShared(vote.id, castHash);
         const updatedUser = await this.userService.addPoints(dbUser.id, 3);
 
-        return hasResponse(res, {
+        // Calculate day from vote date (using same calculation as contract: block.timestamp / 86400)
+        const voteTimestamp = Math.floor(new Date(vote.date).getTime() / 1000);
+        const day = Math.floor(voteTimestamp / 86400);
+
+        console.log('Before verifying share for reward');
+
+        // Mark share as verified for reward claim
+        await this.rewardService.verifyShareForReward(
+          dbUser.fid,
+          day,
+          castHash,
+        );
+        console.log('After verifying share for reward');
+
+        // If recipient address is provided, generate the claim signature
+        let claimSignature = null;
+        if (recipientAddress) {
+          console.log('Generating claim signature');
+          try {
+            claimSignature = await this.rewardService.generateClaimSignature(
+              dbUser.fid,
+              day,
+              recipientAddress,
+              castHash,
+            );
+            console.log('✅ [VerifyShare] Claim signature generated:', {
+              signature: claimSignature.signature?.substring(0, 20) + '...',
+              amount: claimSignature.amount,
+              amountType: typeof claimSignature.amount,
+              amountLength: claimSignature.amount.length,
+              deadline: claimSignature.deadline,
+              nonce: claimSignature.nonce,
+              canClaim: claimSignature.canClaim,
+            });
+          } catch (claimError) {
+            console.error(
+              '❌ [VerifyShare] Failed to generate claim signature:',
+              claimError,
+            );
+          }
+        }
+
+        // RIGHT BEFORE THE RETURN STATEMENT, ADD THIS:
+        const responsePayload = {
           verified: true,
           pointsAwarded: 3,
           newTotalPoints: updatedUser.points,
           message: 'Share verified successfully! 3 points awarded.',
+          day,
+          claimSignature: claimSignature
+            ? {
+                signature: claimSignature.signature,
+                amount: claimSignature.amount,
+                deadline: claimSignature.deadline,
+                nonce: claimSignature.nonce,
+                canClaim: claimSignature.canClaim,
+              }
+            : null,
+          note: recipientAddress
+            ? 'Claim signature generated. You can now claim your reward on-chain.'
+            : 'Provide recipientAddress to generate claim signature.',
+        };
+
+        console.log('📤 [VerifyShare] Response payload:', {
+          ...responsePayload,
+          claimSignature: responsePayload.claimSignature
+            ? {
+                ...responsePayload.claimSignature,
+                signature:
+                  responsePayload.claimSignature.signature.substring(0, 20) +
+                  '...',
+                amount: responsePayload.claimSignature.amount,
+                amountType: typeof responsePayload.claimSignature.amount,
+                amountLength: String(responsePayload.claimSignature.amount)
+                  .length,
+              }
+            : null,
+        });
+
+        return hasResponse(res, {
+          ...responsePayload,
+          castHash,
         });
       } catch (neynarError) {
         console.error(
@@ -521,6 +646,168 @@ export class BrandController {
         HttpStatus.INTERNAL_SERVER_ERROR,
         'verifyShare',
         'An unexpected error occurred during verification',
+      );
+    }
+  }
+
+  /**
+   * Handles claim retrieval for already shared votes.
+   * Looks up existing verified shares by voteId (unix timestamp) and user FID.
+   */
+  private async handleClaimRetrieval(
+    user: QuickAuthPayload,
+    voteId: string,
+    recipientAddress: string,
+    res: Response,
+  ): Promise<Response> {
+    try {
+      // Validate recipient address if provided
+      console.log(
+        '✅ [ClaimRetrieval] Recipient address:',
+        recipientAddress,
+        voteId,
+      );
+      if (recipientAddress && !/^0x[a-fA-F0-9]{40}$/.test(recipientAddress)) {
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'verifyShare',
+          'Invalid recipient address format',
+        );
+      }
+
+      // Get the user from database
+      const dbUser = await this.userService.getByFid(user.sub);
+      console.log('✅ [ClaimRetrieval] DB user:', dbUser);
+      if (!dbUser) {
+        return hasError(
+          res,
+          HttpStatus.NOT_FOUND,
+          'verifyShare',
+          'User not found',
+        );
+      }
+
+      // Get the vote by voteId (could be UUID) or transactionHash
+      // Try transaction hash first (more reliable)
+      let vote = await this.brandService.getVoteByTransactionHash(voteId);
+
+      // If not found by transaction hash, try by vote ID (UUID)
+      if (!vote) {
+        vote = await this.brandService.getVoteById(voteId);
+      }
+
+      if (!vote) {
+        return hasError(
+          res,
+          HttpStatus.NOT_FOUND,
+          'verifyShare',
+          'Vote not found',
+        );
+      }
+
+      // Verify vote belongs to user
+      if (vote.user.fid !== dbUser.fid) {
+        return hasError(
+          res,
+          HttpStatus.FORBIDDEN,
+          'verifyShare',
+          'Vote does not belong to user',
+        );
+      }
+
+      // Get day from vote - use day field if available, otherwise calculate from date
+      // Day calculation matches contract: block.timestamp / 86400
+      let day: number;
+      if (vote.day != null) {
+        day = vote.day;
+      } else {
+        // Calculate day from vote date (same as contract: block.timestamp / 86400)
+        const voteTimestamp = Math.floor(new Date(vote.date).getTime() / 1000);
+        day = Math.floor(voteTimestamp / 86400);
+      }
+
+      console.log('✅ [ClaimRetrieval] Day:', day);
+
+      // Look up existing verified share for this user and day
+      const existingShare =
+        await this.brandService.getVerifiedShareByUserAndDay(user.sub, day);
+      console.log('✅ [ClaimRetrieval] Existing share:', existingShare);
+
+      if (!existingShare) {
+        return hasError(
+          res,
+          HttpStatus.NOT_FOUND,
+          'verifyShare',
+          'No verified share found for this vote.',
+        );
+      }
+
+      // Note: We don't validate recipient address against user's stored wallet
+      // as wallet address is provided by frontend and not stored in user model
+
+      // Generate claim signature if recipient address is provided
+      let claimSignature = null;
+      console.log('✅ [ClaimRetrieval] Generating claim signature');
+      if (recipientAddress) {
+        try {
+          console.log(
+            '✅ [ClaimRetrieval] Generating claim signature for existing share',
+          );
+          claimSignature = await this.rewardService.generateClaimSignature(
+            dbUser.fid,
+            day,
+            recipientAddress,
+            existingShare.castHash,
+          );
+          console.log(
+            '✅ [ClaimRetrieval] Claim signature generated for existing share',
+          );
+        } catch (claimError) {
+          console.error(
+            '❌ [ClaimRetrieval] Failed to generate claim signature:',
+            claimError,
+          );
+          // Don't return error here, still return the share info
+        }
+      }
+
+      // Return response similar to successful verification
+      const responsePayload = {
+        verified: true,
+        pointsAwarded: 0, // Points already awarded when originally shared
+        newTotalPoints: dbUser.points,
+        message: existingShare.claimedAt
+          ? 'Share verified. Rewards already claimed.'
+          : 'Share verified. Rewards available.',
+        day,
+        claimSignature: claimSignature
+          ? {
+              signature: claimSignature.signature,
+              amount: claimSignature.amount,
+              deadline: claimSignature.deadline,
+              nonce: claimSignature.nonce,
+              canClaim: claimSignature.canClaim,
+            }
+          : null,
+        castHash: existingShare.castHash,
+        note: recipientAddress
+          ? existingShare.claimedAt
+            ? 'Rewards have already been claimed for this share.'
+            : 'Claim signature generated. You can claim your reward on-chain.'
+          : 'Provide recipientAddress to generate claim signature.',
+      };
+
+      console.log('📤 [ClaimRetrieval] Response payload for existing share');
+
+      return hasResponse(res, responsePayload);
+    } catch (error) {
+      console.error('❌ [ClaimRetrieval] Unexpected error:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'verifyShare',
+        'An unexpected error occurred during claim retrieval',
       );
     }
   }

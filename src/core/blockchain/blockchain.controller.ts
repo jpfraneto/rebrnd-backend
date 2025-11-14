@@ -6,8 +6,13 @@ import { PowerLevelService } from './services/power-level.service';
 import { SignatureService } from './services/signature.service';
 import { RewardService } from './services/reward.service';
 import { CastVerificationService } from './services/cast-verification.service';
+import { IndexerService } from './services/indexer.service';
 
-import { AuthorizationGuard, QuickAuthPayload } from '../../security/guards';
+import {
+  AuthorizationGuard,
+  QuickAuthPayload,
+  IndexerGuard,
+} from '../../security/guards';
 import { Session } from '../../security/decorators';
 
 import { HttpStatus } from '../../utils';
@@ -18,6 +23,12 @@ import {
 } from '@nestjs/common';
 
 import { logger } from '../../main';
+import {
+  SubmitVoteDto,
+  SubmitBrandDto,
+  SubmitRewardClaimDto,
+  UpdateUserLevelDto,
+} from './dto';
 
 @ApiTags('blockchain-service')
 @Controller('blockchain-service')
@@ -28,6 +39,7 @@ export class BlockchainController {
     private readonly signatureService: SignatureService,
     private readonly rewardService: RewardService,
     private readonly castVerificationService: CastVerificationService,
+    private readonly indexerService: IndexerService,
   ) {}
 
   @Post('/authorize-wallet')
@@ -139,6 +151,10 @@ export class BlockchainController {
         } else if (canLevelUp.reason) {
           errorMessage = `${errorMessage}: ${canLevelUp.reason}`;
         }
+
+        console.log('errorMessage', errorMessage);
+        console.log('canLevelUp', canLevelUp);
+        console.log('SENDING FORBIDDEN ERROR');
 
         // Throw ForbiddenException with structured error response
         const errorResponse = {
@@ -291,37 +307,6 @@ export class BlockchainController {
     }
   }
 
-  @Post('/verify-share')
-  @UseGuards(AuthorizationGuard)
-  async verifyShare(
-    @Session() session: QuickAuthPayload,
-    @Body() body: { castHash: string; day: number },
-  ) {
-    try {
-      logger.log(
-        `✅ [BLOCKCHAIN] Manual share verification request for FID: ${session.sub}`,
-      );
-
-      const { castHash, day } = body;
-
-      if (!castHash || day === undefined) {
-        throw new BadRequestException('Cast hash and day are required');
-      }
-
-      const verificationResult =
-        await this.castVerificationService.manuallyVerifyShare(
-          castHash,
-          session.sub,
-          day,
-        );
-
-      return verificationResult;
-    } catch (error) {
-      logger.error('Failed to verify share:', error);
-      throw new InternalServerErrorException('Failed to verify share');
-    }
-  }
-
   @Get('/share-status/:day')
   @UseGuards(AuthorizationGuard)
   async getShareStatus(
@@ -338,6 +323,56 @@ export class BlockchainController {
     } catch (error) {
       logger.error('Failed to get share status:', error);
       throw new InternalServerErrorException('Failed to get share status');
+    }
+  }
+
+  @Post('/authorize-vote')
+  @UseGuards(AuthorizationGuard)
+  async authorizeVote(
+    @Session() session: QuickAuthPayload,
+    @Body()
+    body: {
+      walletAddress: string;
+      brandIds: [number, number, number];
+      deadline: number;
+    },
+  ) {
+    try {
+      logger.log(
+        `🗳️ [BLOCKCHAIN] Vote authorization signature request for FID: ${session.sub}`,
+      );
+
+      const { walletAddress, brandIds, deadline } = body;
+
+      if (!walletAddress || !brandIds || brandIds.length !== 3 || !deadline) {
+        throw new BadRequestException(
+          'Wallet address, exactly 3 brand IDs, and deadline are required',
+        );
+      }
+
+      // Validate brand IDs exist (optional additional validation)
+      // You could add brand validation here if needed
+
+      // Generate the same authorization signature as /authorize-wallet
+      // This is the same signature format needed for vote authorization
+      const authData =
+        await this.signatureService.generateAuthorizationSignature(
+          session.sub,
+          walletAddress,
+          deadline,
+        );
+
+      return {
+        authData,
+        fid: session.sub,
+        walletAddress,
+        brandIds,
+        deadline,
+        message: 'Authorization data generated for voting',
+      };
+    } catch (error) {
+      logger.error('Failed to generate vote authorization signature:', error);
+      throw new Error('Failed to generate vote authorization signature');
     }
   }
 
@@ -399,6 +434,95 @@ export class BlockchainController {
     } catch (error) {
       logger.error('Failed to process cast webhook:', error);
       throw new InternalServerErrorException('Failed to process cast webhook');
+    }
+  }
+
+  /**
+   * Handles vote submissions from Ponder indexer
+   */
+  @Post('/submit-vote')
+  @UseGuards(IndexerGuard)
+  async submitVote(@Body() submitVoteDto: SubmitVoteDto) {
+    try {
+      logger.log(`🗳️ [INDEXER] Received vote submission: ${submitVoteDto.id}`);
+
+      await this.indexerService.handleVoteSubmission(submitVoteDto);
+
+      return {
+        success: true,
+        message: 'Vote processed successfully',
+        voteId: submitVoteDto.id,
+      };
+    } catch (error) {
+      logger.error(
+        `❌ [INDEXER] Failed to process vote ${submitVoteDto.id}:`,
+        error,
+      );
+      throw new InternalServerErrorException(
+        `Failed to process vote: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Handles reward claim submissions from Ponder indexer
+   */
+  @Post('/submit-reward-claim')
+  @UseGuards(IndexerGuard)
+  async submitRewardClaim(@Body() submitRewardClaimDto: SubmitRewardClaimDto) {
+    try {
+      logger.log(
+        `💰 [INDEXER] Received reward claim submission: ${submitRewardClaimDto.id}`,
+      );
+
+      await this.indexerService.handleRewardClaimSubmission(
+        submitRewardClaimDto,
+      );
+
+      return {
+        success: true,
+        message: 'Reward claim processed successfully',
+        claimId: submitRewardClaimDto.id,
+      };
+    } catch (error) {
+      logger.error(
+        `❌ [INDEXER] Failed to process reward claim ${submitRewardClaimDto.id}:`,
+        error,
+      );
+      throw new InternalServerErrorException(
+        `Failed to process reward claim: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Handles user level-up updates from Ponder indexer
+   */
+  @Post('/update-user-level')
+  @UseGuards(IndexerGuard)
+  async updateUserLevel(@Body() updateUserLevelDto: UpdateUserLevelDto) {
+    try {
+      logger.log(
+        `📈 [INDEXER] Received user level update: ${updateUserLevelDto.levelUpId}`,
+      );
+
+      await this.indexerService.handleUserLevelUpdate(updateUserLevelDto);
+
+      return {
+        success: true,
+        message: 'User level update processed successfully',
+        levelUpId: updateUserLevelDto.levelUpId,
+        fid: updateUserLevelDto.fid,
+        newLevel: updateUserLevelDto.brndPowerLevel,
+      };
+    } catch (error) {
+      logger.error(
+        `❌ [INDEXER] Failed to process user level update ${updateUserLevelDto.levelUpId}:`,
+        error,
+      );
+      throw new InternalServerErrorException(
+        `Failed to process user level update: ${error.message}`,
+      );
     }
   }
 }

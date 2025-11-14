@@ -35,4 +35,32 @@ export class UserBrandVotes {
 
   @Column({ nullable: true })
   castHash: string;
+
+  @Column({ nullable: true, length: 66 })
+  transactionHash: string;
+
+  // Reward claim fields
+  @Column({ type: 'decimal', precision: 64, scale: 18, nullable: true })
+  rewardAmount: string;
+
+  @Column({ nullable: true })
+  day: number;
+
+  @Column({ default: false })
+  shareVerified: boolean;
+
+  @Column({ nullable: true })
+  shareVerifiedAt: Date;
+
+  @Column({ nullable: true })
+  signatureGeneratedAt: Date;
+
+  @Column({ nullable: true })
+  nonce: number;
+
+  @Column({ nullable: true })
+  claimedAt: Date;
+
+  @Column({ nullable: true, length: 66 })
+  claimTxHash: string;
 }

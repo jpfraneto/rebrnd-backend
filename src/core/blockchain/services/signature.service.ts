@@ -1,11 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { createWalletClient, createPublicClient, http, encodeAbiParameters } from 'viem';
+import {
+  createWalletClient,
+  createPublicClient,
+  http,
+  encodeAbiParameters,
+  verifyTypedData,
+} from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
 
-import { User } from '../../../models';
+import { User, UserBrandVotes } from '../../../models';
 import { getConfig } from '../../../security/config';
 import { logger } from '../../../main';
 
@@ -13,14 +19,16 @@ import { logger } from '../../../main';
 export class SignatureService {
   private readonly CONTRACT_ADDRESS =
     process.env.STORIES_IN_MOTION_V5_ADDRESS ||
-    '0x570b1138AFc0F40B990792FA134005e32a9f0503';
-  private readonly DOMAIN_NAME = 'StoriesInMotionV5';
+    '0x03c6e7Bd0a7F54a8eD28769c50AB9f9ee5babF8A';
+  private readonly DOMAIN_NAME = 'StoriesInMotionV7';
   private readonly DOMAIN_VERSION = '1';
   private readonly CHAIN_ID = 8453; // Base mainnet
 
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(UserBrandVotes)
+    private readonly userBrandVotesRepository: Repository<UserBrandVotes>,
   ) {}
 
   async generateAuthorizationSignature(
@@ -142,7 +150,7 @@ export class SignatureService {
       : (`0x${process.env.PRIVATE_KEY}` as `0x${string}`);
 
     const account = privateKeyToAccount(privateKey);
-    
+
     // Create a public client to read from the contract
     const publicClient = createPublicClient({
       chain: base,
@@ -154,7 +162,7 @@ export class SignatureService {
       {
         inputs: [
           { name: 'fid', type: 'uint256' },
-          { name: 'wallet', type: 'address' }
+          { name: 'wallet', type: 'address' },
         ],
         name: 'fidNonces',
         outputs: [{ name: '', type: 'uint256' }],
@@ -227,13 +235,29 @@ export class SignatureService {
     day: number,
     castHash: string,
     deadline: number,
-  ): Promise<{ signature: string; nonce: number }> {
+  ): Promise<{ signature: string; nonce: number; canClaim: boolean }> {
     logger.log(
-      `💰 [SIGNATURE] Generating reward claim signature for FID: ${fid}, Amount: ${amount}`,
+      `🔐 [SIGNATURE] ===== STARTING REWARD CLAIM SIGNATURE GENERATION =====`,
+    );
+    logger.log(`💰 [SIGNATURE] Input Parameters:`);
+    logger.log(`   - Recipient: ${recipient}`);
+    logger.log(`   - FID: ${fid}`);
+    logger.log(`   - Amount (raw): ${amount}`);
+    logger.log(`   - Amount (type): ${typeof amount}`);
+    logger.log(`   - Day: ${day}`);
+    logger.log(`   - Cast Hash: ${castHash}`);
+    logger.log(`   - Deadline: ${deadline}`);
+    logger.log(
+      `   - Deadline (readable): ${new Date(deadline * 1000).toISOString()}`,
     );
 
     if (!process.env.PRIVATE_KEY) {
       throw new Error('PRIVATE_KEY environment variable is not set');
+    }
+
+    // Validate recipient address format
+    if (!recipient || !recipient.startsWith('0x') || recipient.length !== 42) {
+      throw new Error('Invalid recipient address');
     }
 
     const user = await this.userRepository.findOne({ where: { fid } });
@@ -241,11 +265,54 @@ export class SignatureService {
       throw new Error('User not found');
     }
 
+    // Check if already claimed
+    const vote = await this.userBrandVotesRepository.findOne({
+      where: { user: { fid }, day },
+      relations: ['user'],
+    });
+
+    if (vote?.claimedAt) {
+      logger.log(
+        `❌ [SIGNATURE] Reward already claimed for FID: ${fid}, Day: ${day}`,
+      );
+      throw new Error('Reward already claimed for this day');
+    }
+
     const privateKey = process.env.PRIVATE_KEY.startsWith('0x')
       ? (process.env.PRIVATE_KEY as `0x${string}`)
       : (`0x${process.env.PRIVATE_KEY}` as `0x${string}`);
 
     const account = privateKeyToAccount(privateKey);
+
+    logger.log(`🔑 [SIGNATURE] Signer Address: ${account.address}`);
+    logger.log(`📝 [SIGNATURE] Contract Address: ${this.CONTRACT_ADDRESS}`);
+
+    const publicClient = createPublicClient({
+      chain: base,
+      transport: http(),
+    });
+
+    const rewardNoncesAbi = [
+      {
+        inputs: [{ name: 'recipient', type: 'address' }],
+        name: 'rewardNonces',
+        outputs: [{ name: '', type: 'uint256' }],
+        stateMutability: 'view',
+        type: 'function',
+      },
+    ] as const;
+
+    const nonce = await publicClient.readContract({
+      address: this.CONTRACT_ADDRESS as `0x${string}`,
+      abi: rewardNoncesAbi,
+      functionName: 'rewardNonces',
+      args: [recipient as `0x${string}`],
+    } as any);
+
+    logger.log(
+      `🔢 [SIGNATURE] Nonce from contract: ${nonce} (type: ${typeof nonce})`,
+    );
+
     const walletClient = createWalletClient({
       account,
       chain: base,
@@ -253,11 +320,17 @@ export class SignatureService {
     });
 
     const domain = {
-      name: this.DOMAIN_NAME,
-      version: this.DOMAIN_VERSION,
-      chainId: this.CHAIN_ID,
+      name: 'StoriesInMotionV7',
+      version: '1',
+      chainId: 8453,
       verifyingContract: this.CONTRACT_ADDRESS as `0x${string}`,
     } as const;
+
+    logger.log(`🌐 [SIGNATURE] EIP-712 Domain:`);
+    logger.log(`   - name: "${domain.name}"`);
+    logger.log(`   - version: "${domain.version}"`);
+    logger.log(`   - chainId: ${domain.chainId}`);
+    logger.log(`   - verifyingContract: ${domain.verifyingContract}`);
 
     const types = {
       RewardClaim: [
@@ -271,35 +344,74 @@ export class SignatureService {
       ],
     } as const;
 
-    const nonce = Date.now();
+    const nonceNumber =
+      typeof nonce === 'bigint' ? Number(nonce) : Number(nonce);
 
-    logger.log(`💰 [SIGNATURE] Signing reward claim message with:`);
-    logger.log(`   - Recipient: ${recipient}`);
-    logger.log(`   - Amount: ${amount}`);
-    logger.log(`   - FID: ${fid}`);
-    logger.log(`   - Day: ${day}`);
-    logger.log(`   - Cast Hash: ${castHash}`);
-    logger.log(`   - Nonce: ${nonce}`);
-    logger.log(`   - Deadline: ${deadline}`);
+    // Convert amount string to BigInt
+    let amountBigInt: bigint;
+    try {
+      amountBigInt = BigInt(amount);
+      logger.log(`💵 [SIGNATURE] Amount conversion successful:`);
+      logger.log(`   - Input: ${amount}`);
+      logger.log(`   - BigInt: ${amountBigInt.toString()}`);
+    } catch (error) {
+      logger.error(`❌ [SIGNATURE] Amount conversion failed: ${error}`);
+      throw new Error(`Invalid amount format: ${amount}`);
+    }
+
+    const message = {
+      recipient: recipient as `0x${string}`,
+      amount: amountBigInt,
+      fid: BigInt(fid),
+      day: BigInt(day),
+      castHash: castHash,
+      nonce: BigInt(nonceNumber),
+      deadline: BigInt(deadline),
+    };
+
+    logger.log(`📧 [SIGNATURE] Message to sign:`);
+    logger.log(`   - recipient: ${message.recipient}`);
+    logger.log(`   - amount: ${message.amount.toString()}`);
+    logger.log(`   - fid: ${message.fid.toString()}`);
+    logger.log(`   - day: ${message.day.toString()}`);
+    logger.log(`   - castHash: "${message.castHash}"`);
+    logger.log(`   - nonce: ${message.nonce.toString()}`);
+    logger.log(`   - deadline: ${message.deadline.toString()}`);
 
     const signature = await walletClient.signTypedData({
       account,
       domain,
       types,
       primaryType: 'RewardClaim',
-      message: {
-        recipient: recipient as `0x${string}`,
-        amount: BigInt(amount),
-        fid: BigInt(fid),
-        day: BigInt(day),
-        castHash: castHash,
-        nonce: BigInt(nonce),
-        deadline: BigInt(deadline),
-      },
+      message,
     });
 
-    logger.log(`✅ [SIGNATURE] Reward claim signature generated: ${signature}`);
+    logger.log(`✅ [SIGNATURE] Signature generated successfully: ${signature}`);
+    logger.log(`✅ [SIGNATURE] Signature length: ${signature.length}`);
+    logger.log(`🔐 [SIGNATURE] ===== SIGNATURE GENERATION COMPLETE =====`);
 
-    return { signature, nonce };
+    // After generating the signature, verify it:
+    const isValid = await verifyTypedData({
+      address: account.address,
+      domain,
+      types,
+      primaryType: 'RewardClaim',
+      message,
+      signature,
+    });
+
+    logger.log(
+      `🔍 [SIGNATURE] Local verification: ${isValid ? '✅ VALID' : '❌ INVALID'}`,
+    );
+    logger.log(`🔍 [SIGNATURE] Expected signer: ${account.address}`);
+    logger.log(
+      `🔍 [SIGNATURE] Backend signer env: ${process.env.BACKEND_SIGNER_ADDRESS || 'NOT SET'}`,
+    );
+
+    return {
+      signature,
+      nonce: nonceNumber,
+      canClaim: true,
+    };
   }
 }
