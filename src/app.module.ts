@@ -15,7 +15,6 @@ import {
   UserBrandVotes,
   BrandTags,
   UserDailyActions,
-  NotificationQueue,
   AirdropScore,
   RewardClaim,
 } from './models';
@@ -38,7 +37,6 @@ import {
         UserBrandVotes,
         BrandTags,
         UserDailyActions,
-        NotificationQueue,
         AirdropScore,
         RewardClaim,
       ],

@@ -1,5 +1,3 @@
-import { NotificationQueue } from '../NotificationQueue';
-
 /**
  * @file This file defines the User entity with its properties and methods.
  */
@@ -51,28 +49,6 @@ export class User {
   @Column()
   role: UserRoleEnum;
 
-  @Column({
-    default: false,
-  })
-  notificationsEnabled: boolean;
-
-  @Column({
-    default: null,
-    nullable: true,
-  })
-  notificationToken: string;
-
-  @Column({
-    default: null,
-    nullable: true,
-  })
-  notificationUrl: string;
-
-  @Column({
-    default: null,
-    nullable: true,
-  })
-  lastVoteReminderSent: Date;
 
   @Column({
     default: 0,
@@ -149,10 +125,4 @@ export class User {
   @OneToMany(() => UserBrandVotes, (userBrandVotes) => userBrandVotes.user)
   userBrandVotes: UserBrandVotes[];
 
-  @OneToMany(
-    () => NotificationQueue,
-    (notificationQueue) => notificationQueue.user,
-    { cascade: true },
-  )
-  notificationQueue: NotificationQueue[];
 }
