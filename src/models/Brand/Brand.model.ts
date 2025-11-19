@@ -125,11 +125,17 @@ export class Brand {
   @Column({ nullable: true })
   onChainCreatedAt: Date;
 
+  @Column({ nullable: true, unique: true })
+  onChainId: number;
+
   @Column({ nullable: true })
   onChainFid: number;
 
   @Column({ nullable: true })
   onChainHandle: string;
+
+  @Column({ nullable: true, length: 42 })
+  onChainWalletAddress: string;
 
   @Column({ nullable: true })
   metadataHash: string;

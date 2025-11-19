@@ -11,6 +11,8 @@ import { ContractUploadService } from './services/contract-upload.service';
 import { IndexerService } from './services/indexer.service';
 import { UserService } from '../user/services';
 import { BrandService } from '../brand/services';
+import { AdminService } from '../admin/services/admin.service';
+import { IpfsService } from '../../utils/ipfs.service';
 import { AuthModule } from '../auth/auth.module';
 
 import {
@@ -19,6 +21,8 @@ import {
   UserBrandVotes,
   UserDailyActions,
   Category,
+  AirdropSnapshot,
+  AirdropScore,
 } from '../../models';
 
 @Module({
@@ -29,6 +33,8 @@ import {
       UserBrandVotes,
       UserDailyActions,
       Category,
+      AirdropSnapshot,
+      AirdropScore,
     ]),
     AuthModule,
   ],
@@ -43,6 +49,8 @@ import {
     IndexerService,
     UserService,
     BrandService,
+    AdminService,
+    IpfsService,
   ],
   exports: [
     BlockchainService,

@@ -1,7 +1,7 @@
 // Dependencies
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, Repository, In } from 'typeorm';
+import { Between, Repository, In, MoreThan } from 'typeorm';
 
 // Models
 import {
@@ -11,6 +11,8 @@ import {
   UserDailyActions,
   Brand,
   UserBrandRanking,
+  AirdropSnapshot,
+  AirdropScore,
 } from '../../../models';
 import { logger } from 'src/main';
 
@@ -62,6 +64,12 @@ export class UserService {
 
     @InjectRepository(Brand)
     private readonly brandRespository: Repository<Brand>,
+
+    @InjectRepository(AirdropSnapshot)
+    private readonly airdropSnapshotRepository: Repository<AirdropSnapshot>,
+
+    @InjectRepository(AirdropScore)
+    private readonly airdropScoreRepository: Repository<AirdropScore>,
   ) {}
 
   /**
@@ -1100,6 +1108,88 @@ export class UserService {
   }
 
   /**
+   * Gets user's airdrop eligibility and snapshot information
+   * @param fid User's Farcaster ID
+   * @returns Airdrop eligibility data for fast frontend rendering
+   */
+  async getUserAirdropInfo(fid: number): Promise<{
+    isEligible: boolean;
+    airdropScore?: number;
+    tokenAllocation?: number;
+    percentage?: number;
+    leaderboardPosition?: number;
+    snapshotExists: boolean;
+    latestSnapshot?: {
+      id: number;
+      merkleRoot: string;
+      totalUsers: number;
+      totalTokens: string;
+      snapshotDate: Date;
+    };
+  }> {
+    try {
+      // Check if user has airdrop score (is eligible)
+      const airdropScore = await this.airdropScoreRepository.findOne({
+        where: { fid },
+      });
+
+      // Get latest snapshot info
+      const latestSnapshot = await this.airdropSnapshotRepository.findOne({
+        order: { createdAt: 'DESC' },
+        select: ['id', 'merkleRoot', 'totalUsers', 'totalTokens', 'snapshotDate'],
+      });
+
+      const response: {
+        isEligible: boolean;
+        airdropScore?: number;
+        tokenAllocation?: number;
+        percentage?: number;
+        leaderboardPosition?: number;
+        snapshotExists: boolean;
+        latestSnapshot?: {
+          id: number;
+          merkleRoot: string;
+          totalUsers: number;
+          totalTokens: string;
+          snapshotDate: Date;
+        };
+      } = {
+        isEligible: !!airdropScore,
+        snapshotExists: !!latestSnapshot,
+        latestSnapshot: latestSnapshot ? {
+          id: latestSnapshot.id,
+          merkleRoot: latestSnapshot.merkleRoot,
+          totalUsers: latestSnapshot.totalUsers,
+          totalTokens: latestSnapshot.totalTokens,
+          snapshotDate: latestSnapshot.snapshotDate,
+        } : undefined,
+      };
+
+      if (airdropScore) {
+        response.airdropScore = Number(airdropScore.finalScore);
+        response.tokenAllocation = Number(airdropScore.tokenAllocation);
+        response.percentage = Number(airdropScore.percentage);
+        
+        // Get leaderboard position (rank among all eligible users)
+        const higherScores = await this.airdropScoreRepository.count({
+          where: {
+            finalScore: MoreThan(airdropScore.finalScore),
+          },
+        });
+        response.leaderboardPosition = higherScores + 1;
+      }
+
+      return response;
+    } catch (error) {
+      logger.error('Error getting user airdrop info:', error);
+      return {
+        isEligible: false,
+        snapshotExists: false,
+      };
+    }
+  }
+
+  /**
    * Gets comprehensive user data with precise activity status for today
    */
   async getComprehensiveUserData(fid: number): Promise<{
@@ -1131,6 +1221,21 @@ export class UserService {
       castHash?: string;
       day?: number;
     };
+    airdrop: {
+      isEligible: boolean;
+      airdropScore?: number;
+      tokenAllocation?: number;
+      percentage?: number;
+      leaderboardPosition?: number;
+      snapshotExists: boolean;
+      latestSnapshot?: {
+        id: number;
+        merkleRoot: string;
+        totalUsers: number;
+        totalTokens: string;
+        snapshotDate: Date;
+      };
+    };
   }> {
     try {
       // Get user with all relations
@@ -1143,10 +1248,11 @@ export class UserService {
         throw new Error('User not found');
       }
 
-      // Get today's vote status and contextual transaction data
-      const [todaysVoteStatus, contextualTransaction] = await Promise.all([
+      // Get today's vote status, contextual transaction data, and airdrop info
+      const [todaysVoteStatus, contextualTransaction, airdropInfo] = await Promise.all([
         this.getTodaysVoteStatus(fid),
         this.getContextualTransactionData(fid),
+        this.getUserAirdropInfo(fid),
       ]);
 
       // Calculate precise boolean flags
@@ -1175,6 +1281,7 @@ export class UserService {
         favoriteBrand: user.favoriteBrand,
         todaysVoteStatus,
         contextualTransaction,
+        airdrop: airdropInfo,
       };
     } catch (error) {
       logger.error('Error getting comprehensive user data:', error);

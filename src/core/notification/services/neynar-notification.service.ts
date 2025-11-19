@@ -60,12 +60,17 @@ export class NeynarNotificationService {
       this.logger.log('Sending evening reminders to users who haven\'t voted');
 
       const today = new Date().toISOString().split('T')[0];
+      // Create date range for better performance (avoids DATE() function)
+      const startOfDay = new Date(today + ' 00:00:00');
+      const endOfDay = new Date(today + ' 23:59:59');
 
-      // Find users who haven't voted today
+      // Find users who haven't voted today - optimized query
       const usersWhoHaventVoted = await this.userRepository
         .createQueryBuilder('user')
-        .leftJoin('user.userBrandVotes', 'vote', 'DATE(vote.date) = :today', {
-          today,
+        .leftJoin('user.userBrandVotes', 'vote', 
+          'vote.date >= :startOfDay AND vote.date <= :endOfDay', {
+          startOfDay,
+          endOfDay,
         })
         .where('vote.id IS NULL') // No vote today
         .select(['user.fid'])

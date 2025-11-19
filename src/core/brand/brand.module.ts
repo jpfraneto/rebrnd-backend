@@ -11,6 +11,7 @@ import { BrandService } from './services';
 import { UserService } from '../user/services';
 import { BrandSeederService } from './services/brand-seeding.service';
 import { AdminService } from '../admin/services/admin.service';
+import { IpfsService } from '../../utils/ipfs.service';
 
 // Models
 import {
@@ -20,6 +21,8 @@ import {
   UserDailyActions,
   Category,
   RewardClaim,
+  AirdropScore,
+  AirdropSnapshot,
 } from '../../models';
 import { AuthModule } from '../auth/auth.module';
 import { BrandSchedulerService } from './services/brand-scheduler.service';
@@ -35,6 +38,8 @@ import { BlockchainModule } from '../blockchain/blockchain.module';
       UserDailyActions,
       Category,
       RewardClaim,
+      AirdropScore,
+      AirdropSnapshot,
     ]),
     AuthModule,
     BlockchainModule,
@@ -46,6 +51,7 @@ import { BlockchainModule } from '../blockchain/blockchain.module';
     BrandSeederService,
     AdminService,
     BrandSchedulerService,
+    IpfsService,
   ],
   exports: [BrandService],
 })

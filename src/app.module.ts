@@ -16,6 +16,7 @@ import {
   BrandTags,
   UserDailyActions,
   AirdropScore,
+  AirdropSnapshot,
   RewardClaim,
 } from './models';
 
@@ -38,6 +39,7 @@ import {
         BrandTags,
         UserDailyActions,
         AirdropScore,
+        AirdropSnapshot,
         RewardClaim,
       ],
       // Important: Set synchronize to false in production for safety
@@ -54,9 +56,9 @@ import {
         // Keep insecureAuth for development, remove in production
         ...(getConfig().isProduction ? {} : { insecureAuth: true }),
         // Connection pool settings for production
-        connectionLimit: 10,
-        acquireTimeout: 60000,
-        timeout: 60000,
+        connectionLimit: 20, // Increased from 10 to handle concurrent operations
+        acquireTimeout: 30000, // Reduced from 60000
+        timeout: 30000, // Reduced from 60000
       },
     }),
   ],

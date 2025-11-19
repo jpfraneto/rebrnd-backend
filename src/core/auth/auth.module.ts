@@ -10,12 +10,12 @@ import { AuthService } from './services';
 import { UserService } from '../user/services';
 
 // Models
-import { Brand, User, UserBrandVotes, UserDailyActions } from '../../models';
+import { Brand, User, UserBrandVotes, UserDailyActions, AirdropSnapshot, AirdropScore } from '../../models';
 import { AdminGuard } from 'src/security/guards';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Brand, UserBrandVotes, UserDailyActions]),
+    TypeOrmModule.forFeature([User, Brand, UserBrandVotes, UserDailyActions, AirdropSnapshot, AirdropScore]),
   ],
   controllers: [AuthController],
   providers: [AuthService, UserService, AdminGuard],

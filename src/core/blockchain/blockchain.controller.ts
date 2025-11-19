@@ -29,6 +29,8 @@ import {
   SubmitRewardClaimDto,
   UpdateUserLevelDto,
 } from './dto';
+import { BlockchainBrandDto } from '../admin/dto';
+import { AdminService } from '../admin/services/admin.service';
 
 @ApiTags('blockchain-service')
 @Controller('blockchain-service')
@@ -40,6 +42,7 @@ export class BlockchainController {
     private readonly rewardService: RewardService,
     private readonly castVerificationService: CastVerificationService,
     private readonly indexerService: IndexerService,
+    private readonly adminService: AdminService,
   ) {}
 
   @Post('/authorize-wallet')
@@ -522,6 +525,41 @@ export class BlockchainController {
       );
       throw new InternalServerErrorException(
         `Failed to process user level update: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Handles brand creation from Ponder indexer
+   * Creates brand in database based on blockchain data
+   */
+  @Post('/brands')
+  @UseGuards(IndexerGuard)
+  async createBrandFromBlockchain(@Body() blockchainBrandDto: BlockchainBrandDto) {
+    try {
+      logger.log(
+        `📋 [INDEXER] Received brand creation: ${blockchainBrandDto.id} - ${blockchainBrandDto.handle}`,
+      );
+
+      const brand = await this.adminService.createBrandFromBlockchain(
+        blockchainBrandDto,
+      );
+
+      return {
+        success: true,
+        message: 'Brand created successfully from blockchain',
+        brandId: brand.id,
+        onChainId: brand.onChainId,
+        handle: brand.onChainHandle,
+        fid: brand.onChainFid,
+      };
+    } catch (error) {
+      logger.error(
+        `❌ [INDEXER] Failed to create brand ${blockchainBrandDto.id}:`,
+        error,
+      );
+      throw new InternalServerErrorException(
+        `Failed to create brand from blockchain: ${error.message}`,
       );
     }
   }

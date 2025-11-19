@@ -15,7 +15,8 @@ import { ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { AdminService } from './services/admin.service';
 import { ContractUploadService } from '../blockchain/services/contract-upload.service';
-import { CreateBrandDto, UpdateBrandDto } from './dto';
+import { AirdropService } from '../airdrop/services/airdrop.service';
+import { CreateBrandDto, UpdateBrandDto, PrepareMetadataDto, BlockchainBrandDto } from './dto';
 import { AuthorizationGuard, QuickAuthPayload } from '../../security/guards';
 import { Session } from '../../security/decorators';
 import { HttpStatus, hasError, hasResponse } from '../../utils';
@@ -29,6 +30,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly contractUploadService: ContractUploadService,
+    private readonly airdropService: AirdropService,
   ) {
     console.log('AdminController initialized');
   }
@@ -445,6 +447,57 @@ export class AdminController {
   }
 
   /**
+   * Prepares brand metadata for on-chain creation
+   * Uploads metadata to IPFS and returns hash for smart contract
+   */
+  @Post('brands/prepare-metadata')
+  @UseGuards(AuthorizationGuard)
+  async prepareBrandMetadata(
+    @Session() user: QuickAuthPayload,
+    @Body() prepareMetadataDto: PrepareMetadataDto,
+    @Res() res: Response,
+  ) {
+    console.log(
+      `prepareBrandMetadata called - user: ${user.sub}`,
+      prepareMetadataDto,
+    );
+
+    if (!adminFids.includes(user.sub)) {
+      console.log(`Access denied for user ${user.sub} - not in admin list`);
+      return hasError(
+        res,
+        HttpStatus.FORBIDDEN,
+        'prepareBrandMetadata',
+        'Admin access required',
+      );
+    }
+
+    try {
+      console.log('Preparing brand metadata for IPFS upload...');
+      const result =
+        await this.adminService.prepareBrandMetadata(prepareMetadataDto);
+      console.log('Brand metadata prepared successfully:', result);
+
+      return hasResponse(res, {
+        metadataHash: result.metadataHash,
+        handle: result.handle,
+        fid: result.fid,
+        walletAddress: result.walletAddress,
+        message:
+          'Brand metadata uploaded to IPFS. Use the metadataHash to create the brand on-chain.',
+      });
+    } catch (error) {
+      console.error('Error in prepareBrandMetadata:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'prepareBrandMetadata',
+        error.message,
+      );
+    }
+  }
+
+  /**
    * Check contract sync status - compares database brands vs contract brands
    * TESTING MODE: Auth disabled
    */
@@ -494,7 +547,7 @@ export class AdminController {
   /**
    * Upload all brands from database to smart contract
    */
-  @Get('brands/upload-to-contract')
+  @Get('brands/upload-all-brands-to-contract')
   // UPLOAD BRANDS TO SMART CONTRACT
   async uploadBrandsToContract(@Res() res: Response) {
     logger.log(`uploadBrandsToContract called - testing mode (no auth)`);
@@ -816,6 +869,57 @@ export class AdminController {
         HttpStatus.INTERNAL_SERVER_ERROR,
         'resetUploadFlags',
         `Failed to reset flags: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Generate airdrop snapshot (merkle tree) for top 1111 users
+   * Creates a merkle root that can be deployed to the airdrop smart contract
+   */
+  @Get('airdrop-snapshot')
+  @UseGuards(AuthorizationGuard)
+  async generateAirdropSnapshot(
+    @Session() user: QuickAuthPayload,
+    @Res() res: Response,
+  ) {
+    console.log(
+      `generateAirdropSnapshot called - user: ${user.sub}`,
+    );
+
+    if (!adminFids.includes(user.sub)) {
+      console.log(`Access denied for user ${user.sub} - not in admin list`);
+      return hasError(
+        res,
+        HttpStatus.FORBIDDEN,
+        'generateAirdropSnapshot',
+        'Admin access required',
+      );
+    }
+
+    try {
+      console.log('🌳 Generating airdrop snapshot...');
+      const snapshot = await this.airdropService.generateAirdropSnapshot();
+      console.log('✅ Airdrop snapshot generated successfully:', snapshot);
+
+      return hasResponse(res, {
+        success: true,
+        message: `Airdrop snapshot generated for ${snapshot.totalUsers} users`,
+        snapshot: {
+          snapshotId: snapshot.snapshotId,
+          merkleRoot: snapshot.merkleRoot,
+          totalUsers: snapshot.totalUsers,
+          totalTokens: snapshot.totalTokens,
+          note: 'Use this merkleRoot to deploy the airdrop smart contract. Users can claim using their FID and merkle proof.',
+        },
+      });
+    } catch (error) {
+      console.error('Error generating airdrop snapshot:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'generateAirdropSnapshot',
+        error.message,
       );
     }
   }

@@ -11,6 +11,525 @@ import { logger } from '../../../main';
 // Contract ABI for StoriesInMotionV5
 const STORIES_IN_MOTION_V5_ABI = [
   {
+    inputs: [
+      { internalType: 'address', name: '_brndToken', type: 'address' },
+      { internalType: 'address', name: '_escrowWallet', type: 'address' },
+      { internalType: 'address', name: '_backendSigner', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+    type: 'constructor',
+  },
+  { inputs: [], name: 'AlreadyUsed', type: 'error' },
+  { inputs: [], name: 'ECDSAInvalidSignature', type: 'error' },
+  {
+    inputs: [{ internalType: 'uint256', name: 'length', type: 'uint256' }],
+    name: 'ECDSAInvalidSignatureLength',
+    type: 'error',
+  },
+  {
+    inputs: [{ internalType: 'bytes32', name: 's', type: 'bytes32' }],
+    name: 'ECDSAInvalidSignatureS',
+    type: 'error',
+  },
+  { inputs: [], name: 'Expired', type: 'error' },
+  { inputs: [], name: 'InsufficientBalance', type: 'error' },
+  { inputs: [], name: 'InvalidInput', type: 'error' },
+  {
+    inputs: [{ internalType: 'address', name: 'owner', type: 'address' }],
+    name: 'OwnableInvalidOwner',
+    type: 'error',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'account', type: 'address' }],
+    name: 'OwnableUnauthorizedAccount',
+    type: 'error',
+  },
+  { inputs: [], name: 'Unauthorized', type: 'error' },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: 'address',
+        name: 'admin',
+        type: 'address',
+      },
+      {
+        indexed: true,
+        internalType: 'address',
+        name: 'addedBy',
+        type: 'address',
+      },
+    ],
+    name: 'AdminAdded',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: 'address',
+        name: 'admin',
+        type: 'address',
+      },
+      {
+        indexed: true,
+        internalType: 'address',
+        name: 'removedBy',
+        type: 'address',
+      },
+    ],
+    name: 'AdminRemoved',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: 'uint16',
+        name: 'brandId',
+        type: 'uint16',
+      },
+      {
+        indexed: false,
+        internalType: 'string',
+        name: 'handle',
+        type: 'string',
+      },
+      { indexed: false, internalType: 'uint256', name: 'fid', type: 'uint256' },
+      {
+        indexed: false,
+        internalType: 'address',
+        name: 'walletAddress',
+        type: 'address',
+      },
+      {
+        indexed: false,
+        internalType: 'uint256',
+        name: 'createdAt',
+        type: 'uint256',
+      },
+    ],
+    name: 'BrandCreated',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: 'uint16',
+        name: 'brandId',
+        type: 'uint16',
+      },
+      { indexed: true, internalType: 'uint256', name: 'fid', type: 'uint256' },
+      {
+        indexed: false,
+        internalType: 'uint256',
+        name: 'amount',
+        type: 'uint256',
+      },
+    ],
+    name: 'BrandRewardWithdrawn',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: 'uint16',
+        name: 'brandId',
+        type: 'uint16',
+      },
+      {
+        indexed: false,
+        internalType: 'string',
+        name: 'newMetadataHash',
+        type: 'string',
+      },
+      {
+        indexed: false,
+        internalType: 'uint256',
+        name: 'newFid',
+        type: 'uint256',
+      },
+      {
+        indexed: false,
+        internalType: 'address',
+        name: 'newWalletAddress',
+        type: 'address',
+      },
+    ],
+    name: 'BrandUpdated',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: false,
+        internalType: 'uint16[]',
+        name: 'brandIds',
+        type: 'uint16[]',
+      },
+      {
+        indexed: false,
+        internalType: 'string[]',
+        name: 'handles',
+        type: 'string[]',
+      },
+      {
+        indexed: false,
+        internalType: 'uint256[]',
+        name: 'fids',
+        type: 'uint256[]',
+      },
+      {
+        indexed: false,
+        internalType: 'address[]',
+        name: 'walletAddresses',
+        type: 'address[]',
+      },
+      {
+        indexed: false,
+        internalType: 'uint256',
+        name: 'createdAt',
+        type: 'uint256',
+      },
+    ],
+    name: 'BrandsCreated',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: 'uint256', name: 'fid', type: 'uint256' },
+      { indexed: true, internalType: 'uint8', name: 'newLevel', type: 'uint8' },
+      {
+        indexed: true,
+        internalType: 'address',
+        name: 'wallet',
+        type: 'address',
+      },
+    ],
+    name: 'BrndPowerLevelUp',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: 'address',
+        name: 'previousOwner',
+        type: 'address',
+      },
+      {
+        indexed: true,
+        internalType: 'address',
+        name: 'newOwner',
+        type: 'address',
+      },
+    ],
+    name: 'OwnershipTransferred',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: 'address',
+        name: 'voter',
+        type: 'address',
+      },
+      { indexed: true, internalType: 'uint256', name: 'fid', type: 'uint256' },
+      { indexed: true, internalType: 'uint256', name: 'day', type: 'uint256' },
+      {
+        indexed: false,
+        internalType: 'uint16[3]',
+        name: 'brandIds',
+        type: 'uint16[3]',
+      },
+      {
+        indexed: false,
+        internalType: 'uint256',
+        name: 'cost',
+        type: 'uint256',
+      },
+    ],
+    name: 'PodiumCreated',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: 'address',
+        name: 'recipient',
+        type: 'address',
+      },
+      { indexed: true, internalType: 'uint256', name: 'fid', type: 'uint256' },
+      {
+        indexed: false,
+        internalType: 'uint256',
+        name: 'amount',
+        type: 'uint256',
+      },
+      { indexed: false, internalType: 'uint256', name: 'day', type: 'uint256' },
+      {
+        indexed: false,
+        internalType: 'string',
+        name: 'castHash',
+        type: 'string',
+      },
+      {
+        indexed: false,
+        internalType: 'address',
+        name: 'caller',
+        type: 'address',
+      },
+    ],
+    name: 'RewardClaimed',
+    type: 'event',
+  },
+  {
+    anonymous: false,
+    inputs: [
+      { indexed: true, internalType: 'uint256', name: 'fid', type: 'uint256' },
+      {
+        indexed: true,
+        internalType: 'address',
+        name: 'wallet',
+        type: 'address',
+      },
+    ],
+    name: 'WalletAuthorized',
+    type: 'event',
+  },
+  {
+    inputs: [],
+    name: 'BASE_VOTE_COST',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'BRND_TOKEN',
+    outputs: [{ internalType: 'contract IBRND', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'ESCROW_WALLET',
+    outputs: [{ internalType: 'address', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'LEVEL_1_VOTE_COST',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'MAX_BRND_POWER_LEVEL',
+    outputs: [{ internalType: 'uint8', name: '', type: 'uint8' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'REWARD_MULTIPLIER',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'SECONDS_PER_DAY',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'admin', type: 'address' }],
+    name: 'addAdmin',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: '', type: 'address' }],
+    name: 'authorizedFidOf',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'backendSigner',
+    outputs: [{ internalType: 'address', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'string[]', name: 'handles', type: 'string[]' },
+      { internalType: 'string[]', name: 'metadataHashes', type: 'string[]' },
+      { internalType: 'uint256[]', name: 'fids', type: 'uint256[]' },
+      { internalType: 'address[]', name: 'walletAddresses', type: 'address[]' },
+    ],
+    name: 'batchCreateBrands',
+    outputs: [{ internalType: 'uint16[]', name: 'brandIds', type: 'uint16[]' }],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint16', name: '', type: 'uint16' }],
+    name: 'brands',
+    outputs: [
+      { internalType: 'uint256', name: 'fid', type: 'uint256' },
+      { internalType: 'address', name: 'walletAddress', type: 'address' },
+      { internalType: 'uint256', name: 'totalBrndAwarded', type: 'uint256' },
+      { internalType: 'uint256', name: 'availableBrnd', type: 'uint256' },
+      { internalType: 'string', name: 'handle', type: 'string' },
+      { internalType: 'string', name: 'metadataHash', type: 'string' },
+      { internalType: 'uint256', name: 'createdAt', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'account', type: 'address' }],
+    name: 'checkIsAdmin',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'address', name: 'recipient', type: 'address' },
+      { internalType: 'uint256', name: 'amount', type: 'uint256' },
+      { internalType: 'uint256', name: 'fid', type: 'uint256' },
+      { internalType: 'uint256', name: 'day', type: 'uint256' },
+      { internalType: 'string', name: 'castHash', type: 'string' },
+      { internalType: 'uint256', name: 'deadline', type: 'uint256' },
+      { internalType: 'bytes', name: 'signature', type: 'bytes' },
+    ],
+    name: 'claimReward',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'string', name: 'handle', type: 'string' },
+      { internalType: 'string', name: 'metadataHash', type: 'string' },
+      { internalType: 'uint256', name: 'fid', type: 'uint256' },
+      { internalType: 'address', name: 'walletAddress', type: 'address' },
+    ],
+    name: 'createBrand',
+    outputs: [{ internalType: 'uint16', name: 'brandId', type: 'uint16' }],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'uint256', name: '', type: 'uint256' },
+      { internalType: 'uint256', name: '', type: 'uint256' },
+    ],
+    name: 'dayFidClaimed',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    name: 'dayTotalAllocation',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'uint256', name: '', type: 'uint256' },
+      { internalType: 'address', name: '', type: 'address' },
+    ],
+    name: 'fidNonces',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'uint256', name: '', type: 'uint256' },
+      { internalType: 'address', name: '', type: 'address' },
+    ],
+    name: 'fidWalletAuthorized',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint16', name: 'brandId', type: 'uint16' }],
+    name: 'getBrand',
+    outputs: [
+      {
+        components: [
+          { internalType: 'uint256', name: 'fid', type: 'uint256' },
+          { internalType: 'address', name: 'walletAddress', type: 'address' },
+          {
+            internalType: 'uint256',
+            name: 'totalBrndAwarded',
+            type: 'uint256',
+          },
+          { internalType: 'uint256', name: 'availableBrnd', type: 'uint256' },
+          { internalType: 'string', name: 'handle', type: 'string' },
+          { internalType: 'string', name: 'metadataHash', type: 'string' },
+          { internalType: 'uint256', name: 'createdAt', type: 'uint256' },
+        ],
+        internalType: 'struct StoriesInMotionV8.Brand',
+        name: '',
+        type: 'tuple',
+      },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getCurrentDay',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'uint256', name: 'fid', type: 'uint256' },
+      { internalType: 'uint256', name: 'day', type: 'uint256' },
+    ],
+    name: 'getDailyPodium',
+    outputs: [{ internalType: 'uint16[3]', name: '', type: 'uint16[3]' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint8', name: 'brndPowerLevel', type: 'uint8' }],
+    name: 'getRewardAmount',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'pure',
+    type: 'function',
+  },
+  {
     inputs: [{ internalType: 'uint256', name: 'fid', type: 'uint256' }],
     name: 'getUserInfo',
     outputs: [
@@ -27,6 +546,133 @@ const STORIES_IN_MOTION_V5_ABI = [
     name: 'getUserWallets',
     outputs: [{ internalType: 'address[]', name: '', type: 'address[]' }],
     stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint8', name: 'brndPowerLevel', type: 'uint8' }],
+    name: 'getVoteCost',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'pure',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'string', name: '', type: 'string' }],
+    name: 'handleExists',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'uint256', name: 'fid', type: 'uint256' },
+      { internalType: 'uint256', name: 'day', type: 'uint256' },
+    ],
+    name: 'hasVotedToday',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: '', type: 'address' }],
+    name: 'isAdmin',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'uint256', name: 'fid', type: 'uint256' },
+      { internalType: 'uint8', name: 'newLevel', type: 'uint8' },
+      { internalType: 'uint256', name: 'deadline', type: 'uint256' },
+      { internalType: 'bytes', name: 'signature', type: 'bytes' },
+      { internalType: 'bytes', name: 'authData', type: 'bytes' },
+    ],
+    name: 'levelUpBrndPower',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'owner',
+    outputs: [{ internalType: 'address', name: '', type: 'address' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'admin', type: 'address' }],
+    name: 'removeAdmin',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: '', type: 'address' }],
+    name: 'rewardNonces',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'newSigner', type: 'address' }],
+    name: 'setBackendSigner',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: 'newOwner', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'uint16', name: 'brandId', type: 'uint16' },
+      { internalType: 'string', name: 'newMetadataHash', type: 'string' },
+      { internalType: 'uint256', name: 'newFid', type: 'uint256' },
+      { internalType: 'address', name: 'newWalletAddress', type: 'address' },
+    ],
+    name: 'updateBrand',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    name: 'users',
+    outputs: [
+      { internalType: 'uint256', name: 'fid', type: 'uint256' },
+      { internalType: 'uint8', name: 'brndPowerLevel', type: 'uint8' },
+      { internalType: 'uint32', name: 'lastVoteDay', type: 'uint32' },
+      { internalType: 'uint256', name: 'totalVotes', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'uint16[3]', name: 'brandIds', type: 'uint16[3]' },
+      { internalType: 'bytes', name: 'authData', type: 'bytes' },
+    ],
+    name: 'vote',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'uint16', name: 'brandId', type: 'uint16' }],
+    name: 'withdrawBrandRewards',
+    outputs: [],
+    stateMutability: 'nonpayable',
     type: 'function',
   },
 ] as const;
@@ -429,6 +1075,117 @@ export class BlockchainService {
         error,
       );
       return [];
+    }
+  }
+
+  async getBrandFromContract(brandId: number): Promise<{
+    fid: number;
+    walletAddress: string;
+    totalBrndAwarded: number;
+    availableBrnd: number;
+    handle: string;
+    metadataHash: string;
+    createdAt: number;
+  } | null> {
+    try {
+      logger.log(
+        `📋 [BLOCKCHAIN] Getting brand from contract for ID: ${brandId}`,
+      );
+
+      const CONTRACT_ADDRESS = getConfig().blockchain.contractAddress;
+      console.log('THE CONTRACT ADDRESS IS: ', CONTRACT_ADDRESS);
+      const publicClient = this.getPublicClient();
+
+      // Call getBrand(uint16 brandId) using viem
+      const result = (await publicClient.readContract({
+        address: CONTRACT_ADDRESS as Address,
+        abi: STORIES_IN_MOTION_V5_ABI,
+        functionName: 'getBrand',
+        args: [brandId],
+      } as any)) as {
+        fid: bigint;
+        walletAddress: Address;
+        totalBrndAwarded: bigint;
+        availableBrnd: bigint;
+        handle: string;
+        metadataHash: string;
+        createdAt: bigint;
+      };
+
+      // result is a Brand struct with named properties
+      const {
+        fid,
+        walletAddress,
+        totalBrndAwarded,
+        availableBrnd,
+        handle,
+        metadataHash,
+        createdAt,
+      } = result;
+
+      logger.log(`✅ [BLOCKCHAIN] Contract brand info for ID ${brandId}:`, {
+        fid: Number(fid),
+        walletAddress,
+        handle,
+        metadataHash,
+        createdAt: Number(createdAt),
+      });
+
+      return {
+        fid: Number(fid),
+        walletAddress: walletAddress.toLowerCase(),
+        totalBrndAwarded: Number(totalBrndAwarded),
+        availableBrnd: Number(availableBrnd),
+        handle,
+        metadataHash,
+        createdAt: Number(createdAt),
+      };
+    } catch (error) {
+      logger.error(
+        `Error getting brand from contract for ID ${brandId}:`,
+        error,
+      );
+      return null;
+    }
+  }
+
+  async fetchMetadataFromIpfs(ipfsHash: string): Promise<any> {
+    try {
+      logger.log(`📡 [IPFS] Fetching metadata from hash: ${ipfsHash}`);
+
+      // Try multiple IPFS gateways for redundancy
+      const gateways = [
+        `https://ipfs.io/ipfs/${ipfsHash}`,
+        `https://cloudflare-ipfs.com/ipfs/${ipfsHash}`,
+        `https://gateway.pinata.cloud/ipfs/${ipfsHash}`,
+      ];
+
+      for (const gateway of gateways) {
+        try {
+          const response = await fetch(gateway);
+
+          if (response.ok) {
+            const metadata = await response.json();
+            logger.log(
+              `✅ [IPFS] Successfully fetched metadata from: ${gateway}`,
+            );
+            return metadata;
+          }
+        } catch (gatewayError) {
+          logger.warn(
+            `❌ [IPFS] Gateway failed: ${gateway}`,
+            gatewayError.message,
+          );
+        }
+      }
+
+      throw new Error('All IPFS gateways failed');
+    } catch (error) {
+      logger.error(
+        `Error fetching metadata from IPFS hash ${ipfsHash}:`,
+        error,
+      );
+      throw error;
     }
   }
 }

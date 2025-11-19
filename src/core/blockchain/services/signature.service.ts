@@ -19,7 +19,7 @@ import { logger } from '../../../main';
 export class SignatureService {
   private readonly CONTRACT_ADDRESS =
     process.env.STORIES_IN_MOTION_V5_ADDRESS ||
-    '0x03c6e7Bd0a7F54a8eD28769c50AB9f9ee5babF8A';
+    '0xbcd8b5cd91d88d105a6f4df007a157615aba862d';
   private readonly DOMAIN_NAME = 'StoriesInMotionV7';
   private readonly DOMAIN_VERSION = '1';
   private readonly CHAIN_ID = 8453; // Base mainnet
@@ -413,5 +413,155 @@ export class SignatureService {
       nonce: nonceNumber,
       canClaim: true,
     };
+  }
+
+  /**
+   * Generates EIP-712 signature for airdrop claim
+   * Verifies wallet belongs to FID via Neynar before signing
+   */
+  async generateAirdropClaimSignature(
+    fid: number,
+    walletAddress: string,
+    amount: string,
+    merkleRoot: string,
+    deadline: number,
+  ): Promise<string> {
+    logger.log(
+      `🔐 [AIRDROP SIGNATURE] Generating airdrop claim signature for FID: ${fid}, Wallet: ${walletAddress}`,
+    );
+
+    // Validate wallet address format
+    if (!walletAddress || !walletAddress.startsWith('0x') || walletAddress.length !== 42) {
+      throw new Error('Invalid wallet address');
+    }
+
+    // Verify wallet belongs to FID via Neynar
+    const userInfo = await this.getNeynarUserInfo(fid);
+    if (!userInfo?.verified_addresses?.eth_addresses) {
+      throw new Error('No verified ETH addresses found for this FID');
+    }
+
+    const verifiedAddresses = userInfo.verified_addresses.eth_addresses.map(
+      (addr: string) => addr.toLowerCase(),
+    );
+    const walletLower = walletAddress.toLowerCase();
+
+    if (!verifiedAddresses.includes(walletLower)) {
+      logger.error(
+        `❌ [AIRDROP SIGNATURE] Wallet ${walletAddress} is not verified for FID ${fid}`,
+      );
+      throw new Error('Wallet address is not verified for this FID');
+    }
+
+    logger.log(
+      `✅ [AIRDROP SIGNATURE] Wallet ${walletAddress} verified for FID ${fid}`,
+    );
+
+    if (!process.env.PRIVATE_KEY) {
+      throw new Error('PRIVATE_KEY environment variable is not set');
+    }
+
+    const privateKey = process.env.PRIVATE_KEY.startsWith('0x')
+      ? (process.env.PRIVATE_KEY as `0x${string}`)
+      : (`0x${process.env.PRIVATE_KEY}` as `0x${string}`);
+
+    const account = privateKeyToAccount(privateKey);
+
+    // Get airdrop contract address from config
+    const config = getConfig();
+    const airdropContractAddress = config.blockchain.airdropContractAddress;
+
+    if (!airdropContractAddress) {
+      throw new Error('AIRDROP_CONTRACT_ADDRESS not configured');
+    }
+
+    const walletClient = createWalletClient({
+      account,
+      chain: base,
+      transport: http(),
+    });
+
+    const domain = {
+      name: 'StoriesInMotionAirdrop1',
+      version: '1',
+      chainId: this.CHAIN_ID,
+      verifyingContract: airdropContractAddress as `0x${string}`,
+    } as const;
+
+    logger.log(`🔐 [AIRDROP SIGNATURE] EIP-712 domain configured:`);
+    logger.log(`   - Name: ${domain.name}`);
+    logger.log(`   - Version: ${domain.version}`);
+    logger.log(`   - Chain ID: ${domain.chainId}`);
+    logger.log(`   - Contract: ${domain.verifyingContract}`);
+
+    const types = {
+      AirdropClaim: [
+        { name: 'fid', type: 'uint256' },
+        { name: 'wallet', type: 'address' },
+        { name: 'amount', type: 'uint256' },
+        { name: 'merkleRoot', type: 'bytes32' },
+        { name: 'deadline', type: 'uint256' },
+      ],
+    } as const;
+
+    // Convert amount to BigInt
+    const amountBigInt = BigInt(amount);
+    const merkleRootBytes32 = merkleRoot as `0x${string}`;
+
+    logger.log(`🔐 [AIRDROP SIGNATURE] Signing airdrop claim message with:`);
+    logger.log(`   - FID: ${fid}`);
+    logger.log(`   - Wallet: ${walletAddress}`);
+    logger.log(`   - Amount: ${amountBigInt.toString()}`);
+    logger.log(`   - Merkle Root: ${merkleRoot}`);
+    logger.log(`   - Deadline: ${deadline}`);
+
+    const signature = await walletClient.signTypedData({
+      account,
+      domain,
+      types,
+      primaryType: 'AirdropClaim',
+      message: {
+        fid: BigInt(fid),
+        wallet: walletAddress as `0x${string}`,
+        amount: amountBigInt,
+        merkleRoot: merkleRootBytes32,
+        deadline: BigInt(deadline),
+      },
+    });
+
+    logger.log(`✅ [AIRDROP SIGNATURE] Airdrop claim signature generated: ${signature}`);
+
+    return signature;
+  }
+
+  /**
+   * Helper method to get Neynar user info (same as in airdrop service)
+   */
+  private async getNeynarUserInfo(fid: number): Promise<any> {
+    try {
+      const apiKey = getConfig().neynar.apiKey.replace(/&$/, '');
+
+      const response = await fetch(
+        `https://api.neynar.com/v2/farcaster/user/bulk?fids=${fid}`,
+        {
+          headers: {
+            accept: 'application/json',
+            api_key: apiKey,
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Neynar API error: ${response.status} ${response.statusText}`,
+        );
+      }
+
+      const data = await response.json();
+      return data?.users?.[0] || null;
+    } catch (error) {
+      logger.error('Error fetching Neynar user info:', error);
+      return null;
+    }
   }
 }

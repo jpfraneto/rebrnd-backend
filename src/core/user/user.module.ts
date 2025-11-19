@@ -10,10 +10,10 @@ import { UserController } from './user.controller';
 import { UserService } from './services';
 
 // Models
-import { Brand, User, UserBrandVotes, UserDailyActions } from '../../models';
+import { Brand, User, UserBrandVotes, UserDailyActions, AirdropSnapshot, AirdropScore } from '../../models';
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Brand, UserBrandVotes, UserDailyActions]),
+    TypeOrmModule.forFeature([User, Brand, UserBrandVotes, UserDailyActions, AirdropSnapshot, AirdropScore]),
     AuthModule,
   ],
   controllers: [UserController],

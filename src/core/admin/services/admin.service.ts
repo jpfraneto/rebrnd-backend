@@ -3,8 +3,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like } from 'typeorm';
 import { Brand, Category } from '../../../models';
-import { CreateBrandDto, UpdateBrandDto } from '../dto';
+import { CreateBrandDto, UpdateBrandDto, PrepareMetadataDto, BlockchainBrandDto } from '../dto';
 import NeynarService from '../../../utils/neynar';
+import { IpfsService } from '../../../utils/ipfs.service';
+import { BlockchainService } from '../../blockchain/services/blockchain.service';
 
 import { UserBrandVotes } from '../../../models';
 
@@ -17,6 +19,8 @@ export class AdminService {
     private readonly brandRepository: Repository<Brand>,
     @InjectRepository(Category)
     private readonly categoryRepository: Repository<Category>,
+    private readonly ipfsService: IpfsService,
+    private readonly blockchainService: BlockchainService,
   ) {
     this.neynarService = new NeynarService();
     console.log('AdminService initialized');
@@ -385,5 +389,214 @@ export class AdminService {
     }
 
     return { profile, channel, queryType };
+  }
+
+  /**
+   * Prepares brand metadata for on-chain creation by uploading to IPFS
+   * Validates handle uniqueness and returns IPFS hash
+   */
+  async prepareBrandMetadata(
+    prepareMetadataDto: PrepareMetadataDto,
+  ): Promise<{
+    metadataHash: string;
+    handle: string;
+    fid: number;
+    walletAddress: string;
+  }> {
+    console.log('Preparing brand metadata for IPFS upload:', prepareMetadataDto);
+
+    // Validate required fields
+    if (!prepareMetadataDto.handle || prepareMetadataDto.handle.trim() === '') {
+      throw new Error('Handle is required');
+    }
+
+    if (!prepareMetadataDto.fid || prepareMetadataDto.fid <= 0) {
+      throw new Error('Valid FID is required');
+    }
+
+    if (
+      !prepareMetadataDto.walletAddress ||
+      !/^0x[a-fA-F0-9]{40}$/.test(prepareMetadataDto.walletAddress)
+    ) {
+      throw new Error('Valid wallet address is required (0x format)');
+    }
+
+    // Check handle uniqueness (check both name and onChainHandle)
+    const existingBrand = await this.brandRepository.findOne({
+      where: [
+        { name: prepareMetadataDto.handle },
+        { onChainHandle: prepareMetadataDto.handle },
+      ],
+    });
+
+    if (existingBrand) {
+      throw new Error(
+        `Handle "${prepareMetadataDto.handle}" already exists. Please choose a different handle.`,
+      );
+    }
+
+    // Create metadata JSON object (only upload BrandFormData fields to IPFS)
+    const metadata = {
+      name: prepareMetadataDto.name,
+      url: prepareMetadataDto.url,
+      warpcastUrl: prepareMetadataDto.warpcastUrl,
+      description: prepareMetadataDto.description,
+      categoryId: prepareMetadataDto.categoryId,
+      followerCount: prepareMetadataDto.followerCount,
+      imageUrl: prepareMetadataDto.imageUrl,
+      profile: prepareMetadataDto.profile,
+      channel: prepareMetadataDto.channel,
+      queryType: prepareMetadataDto.queryType,
+      channelOrProfile: prepareMetadataDto.channelOrProfile,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Upload to IPFS
+    const metadataHash = await this.ipfsService.uploadJsonToIpfs(metadata);
+
+    console.log('✅ Brand metadata prepared successfully:', {
+      metadataHash,
+      handle: prepareMetadataDto.handle,
+      fid: prepareMetadataDto.fid,
+      walletAddress: prepareMetadataDto.walletAddress,
+    });
+
+    return {
+      metadataHash,
+      handle: prepareMetadataDto.handle,
+      fid: prepareMetadataDto.fid,
+      walletAddress: prepareMetadataDto.walletAddress,
+    };
+  }
+
+  /**
+   * Creates a brand from blockchain data sent by the indexer
+   * Queries the smart contract for metadata and creates brand in database
+   */
+  async createBrandFromBlockchain(
+    blockchainBrandDto: BlockchainBrandDto,
+  ): Promise<Brand> {
+    console.log('📋 [INDEXER] Creating brand from blockchain data:', blockchainBrandDto);
+
+    try {
+      // Check if brand already exists by onChainId
+      const existingBrand = await this.brandRepository.findOne({
+        where: { onChainId: blockchainBrandDto.id },
+      });
+
+      if (existingBrand) {
+        console.log(`⚠️  [INDEXER] Brand with onChainId ${blockchainBrandDto.id} already exists`);
+        return existingBrand;
+      }
+
+      // Get brand data from smart contract
+      const contractBrand = await this.blockchainService.getBrandFromContract(
+        blockchainBrandDto.id,
+      );
+
+      if (!contractBrand) {
+        throw new Error(`Brand with ID ${blockchainBrandDto.id} not found in smart contract`);
+      }
+
+      // Fetch metadata from IPFS
+      let metadata: any = {};
+      try {
+        metadata = await this.blockchainService.fetchMetadataFromIpfs(
+          contractBrand.metadataHash,
+        );
+        console.log('📡 [IPFS] Successfully fetched metadata:', metadata);
+      } catch (ipfsError) {
+        console.warn('⚠️  [IPFS] Failed to fetch metadata, using contract data only:', ipfsError.message);
+      }
+
+      // Get or create category with fallback
+      const category = await this.getOrCreateCategory(
+        metadata.categoryId || 'General',
+      );
+
+      // Process profile/channel logic from metadata
+      const { profile, channel, queryType } = this.processProfileAndChannel({
+        profile: metadata.profile,
+        channel: metadata.channel,
+        queryType: metadata.queryType || 0,
+        name: contractBrand.handle,
+      });
+
+      // Fetch follower count from Neynar if possible
+      let followerCount = metadata.followerCount || 0;
+      try {
+        if (queryType === 0 && channel) {
+          followerCount = await this.neynarService.getChannelFollowerCount(
+            channel.startsWith('/') ? channel.slice(1) : channel,
+          );
+        } else if (queryType === 1 && profile) {
+          followerCount = await this.neynarService.getProfileFollowerCount(
+            profile.startsWith('@') ? profile.slice(1) : profile,
+          );
+        }
+      } catch (error) {
+        console.warn(
+          'Failed to fetch follower count from Neynar:',
+          error.message,
+        );
+      }
+
+      // Create brand entity
+      const brand = this.brandRepository.create({
+        // On-chain data (source of truth)
+        onChainId: blockchainBrandDto.id,
+        onChainHandle: contractBrand.handle,
+        onChainFid: contractBrand.fid,
+        onChainWalletAddress: contractBrand.walletAddress,
+        onChainCreatedAt: new Date(contractBrand.createdAt * 1000),
+        metadataHash: contractBrand.metadataHash,
+        
+        // Metadata from IPFS (can be updated)
+        name: metadata.name || contractBrand.handle,
+        url: metadata.url || '',
+        warpcastUrl: metadata.warpcastUrl || metadata.url || '',
+        description: metadata.description || '',
+        imageUrl: metadata.imageUrl || '',
+        profile,
+        channel,
+        queryType,
+        followerCount,
+        category,
+
+        // Initialize scoring fields
+        score: 0,
+        stateScore: 0,
+        scoreWeek: 0,
+        stateScoreWeek: 0,
+        scoreMonth: 0,
+        stateScoreMonth: 0,
+        ranking: '0',
+        rankingWeek: 0,
+        rankingMonth: 0,
+        bonusPoints: 0,
+        banned: 0,
+        currentRanking: 0,
+
+        // Blockchain info
+        totalBrndAwarded: contractBrand.totalBrndAwarded.toString(),
+        availableBrnd: contractBrand.availableBrnd.toString(),
+      });
+
+      const savedBrand = await this.brandRepository.save(brand);
+      
+      console.log('✅ [INDEXER] Brand created successfully from blockchain:', {
+        id: savedBrand.id,
+        onChainId: savedBrand.onChainId,
+        name: savedBrand.name,
+        handle: savedBrand.onChainHandle,
+        fid: savedBrand.onChainFid,
+        metadataHash: savedBrand.metadataHash,
+      });
+
+      return savedBrand;
+    } catch (error) {
+      console.error('❌ [INDEXER] Failed to create brand from blockchain:', error);
+      throw new Error(`Failed to create brand from blockchain: ${error.message}`);
+    }
   }
 }

@@ -17,12 +17,12 @@ import { getConfig } from '../config';
  *
  * Expected request headers:
  * - Authorization: Bearer {INDEXER_API_KEY}
- * - X-Indexer-Source: ponder-stories-in-motion-v5
+ * - X-Indexer-Source: ponder-stories-in-motion-v8
  */
 
 @Injectable()
 export class IndexerGuard implements CanActivate {
-  private readonly EXPECTED_INDEXER_SOURCE = 'ponder-stories-in-motion-v5';
+  private readonly EXPECTED_INDEXER_SOURCE = 'ponder-stories-in-motion-v8';
 
   /**
    * Extracts Bearer token from Authorization header.

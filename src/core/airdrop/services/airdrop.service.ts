@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AirdropScore, User } from '../../../models';
+import { AirdropScore, AirdropSnapshot, User } from '../../../models';
 import { getConfig } from '../../../security/config';
+import { MerkleTree } from 'merkletreejs';
+import keccak256 from 'keccak256';
+import { solidityPackedKeccak256 } from 'ethers';
 
 export interface AirdropMultipliers {
   followAccounts: number;
@@ -61,6 +64,8 @@ export class AirdropService {
   constructor(
     @InjectRepository(AirdropScore)
     private readonly airdropScoreRepository: Repository<AirdropScore>,
+    @InjectRepository(AirdropSnapshot)
+    private readonly airdropSnapshotRepository: Repository<AirdropSnapshot>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
@@ -2067,6 +2072,171 @@ export class AirdropService {
       failed,
       errors,
       topAirdropScores,
+    };
+  }
+
+  /**
+   * Generates an airdrop snapshot (merkle tree) for the top 1111 users
+   * Each leaf in the merkle tree is: keccak256(abi.encodePacked(fid, amount))
+   * This allows FID-based claiming on the smart contract
+   */
+  async generateAirdropSnapshot(): Promise<{
+    merkleRoot: string;
+    totalUsers: number;
+    totalTokens: string;
+    snapshotId: number;
+    treeData: any;
+  }> {
+    console.log('🌳 [AIRDROP SNAPSHOT] Starting snapshot generation...');
+
+    // Get top 1111 users from leaderboard
+    const topUsers = await this.getLeaderboard(this.TOP_USERS);
+    console.log(
+      `📊 [AIRDROP SNAPSHOT] Found ${topUsers.length} users in leaderboard`,
+    );
+
+    if (topUsers.length === 0) {
+      throw new Error('No users found in leaderboard');
+    }
+
+    // Build leaves array: each leaf is keccak256(abi.encodePacked(fid, amount))
+    const leaves: Array<{
+      fid: number;
+      amount: string;
+      leaf: string;
+    }> = [];
+
+    let totalTokens = BigInt(0);
+
+    for (const airdropScore of topUsers) {
+      const fid = airdropScore.fid;
+      const amount = BigInt(Math.round(Number(airdropScore.tokenAllocation)));
+
+      // Create leaf: keccak256(abi.encodePacked(fid, amount))
+      // Use ethers' solidityPackedKeccak256 to match Solidity's abi.encodePacked exactly
+      const leafHash = solidityPackedKeccak256(
+        ['uint256', 'uint256'],
+        [BigInt(fid), amount],
+      );
+
+      leaves.push({
+        fid,
+        amount: amount.toString(),
+        leaf: leafHash, // Already in hex format from solidityPackedKeccak256
+      });
+
+      totalTokens += amount;
+    }
+
+    console.log(
+      `🌿 [AIRDROP SNAPSHOT] Created ${leaves.length} leaves, total tokens: ${totalTokens.toString()}`,
+    );
+
+    // Build merkle tree
+    const leafHashes = leaves.map((l) =>
+      Buffer.from(l.leaf.startsWith('0x') ? l.leaf.slice(2) : l.leaf, 'hex'),
+    );
+    const tree = new MerkleTree(leafHashes, keccak256, {
+      sortPairs: true, // Sort pairs for consistent tree structure
+    });
+
+    const merkleRoot = '0x' + tree.getRoot().toString('hex');
+    console.log(`🌳 [AIRDROP SNAPSHOT] Merkle root generated: ${merkleRoot}`);
+
+    // Store snapshot in database
+    const snapshot = this.airdropSnapshotRepository.create({
+      merkleRoot,
+      totalUsers: leaves.length,
+      totalTokens: totalTokens.toString(),
+      treeData: {
+        leaves,
+        // Don't store the full tree object (it's large), we can rebuild it from leaves
+      },
+      snapshotDate: new Date(),
+    });
+
+    const savedSnapshot = await this.airdropSnapshotRepository.save(snapshot);
+    console.log(
+      `💾 [AIRDROP SNAPSHOT] Snapshot saved with ID: ${savedSnapshot.id}`,
+    );
+
+    return {
+      merkleRoot,
+      totalUsers: leaves.length,
+      totalTokens: totalTokens.toString(),
+      snapshotId: savedSnapshot.id,
+      treeData: {
+        leaves: leaves.map((l) => ({
+          fid: l.fid,
+          amount: l.amount,
+        })),
+      },
+    };
+  }
+
+  /**
+   * Generates a merkle proof for a specific FID
+   * Used when a user wants to claim their airdrop
+   */
+  async generateMerkleProof(
+    fid: number,
+    snapshotId?: number,
+  ): Promise<{
+    fid: number;
+    amount: string;
+    proof: string[];
+    merkleRoot: string;
+    snapshotId: number;
+  } | null> {
+    console.log(
+      `🔍 [MERKLE PROOF] Generating proof for FID: ${fid}, snapshotId: ${snapshotId || 'latest'}`,
+    );
+
+    // Get the latest snapshot if no snapshotId provided
+    let snapshot: AirdropSnapshot;
+    if (snapshotId) {
+      snapshot = await this.airdropSnapshotRepository.findOne({
+        where: { id: snapshotId },
+      });
+    } else {
+      snapshot = await this.airdropSnapshotRepository.findOne({
+        order: { createdAt: 'DESC' },
+      });
+    }
+
+    if (!snapshot) {
+      throw new Error('No airdrop snapshot found');
+    }
+
+    // Find the leaf for this FID
+    const leafData = snapshot.treeData.leaves.find((l) => l.fid === fid);
+    if (!leafData) {
+      console.log(`❌ [MERKLE PROOF] FID ${fid} not found in snapshot`);
+      return null;
+    }
+
+    // Rebuild the merkle tree from stored leaves
+    const leafHashes = snapshot.treeData.leaves.map((l) =>
+      Buffer.from(l.leaf.slice(2), 'hex'),
+    );
+    const tree = new MerkleTree(leafHashes, keccak256, {
+      sortPairs: true,
+    });
+
+    // Get the proof
+    const leafHash = Buffer.from(leafData.leaf.slice(2), 'hex');
+    const proof = tree.getProof(leafHash).map((p) => '0x' + p.data.toString('hex'));
+
+    console.log(
+      `✅ [MERKLE PROOF] Generated proof for FID ${fid}, amount: ${leafData.amount}`,
+    );
+
+    return {
+      fid,
+      amount: leafData.amount,
+      proof,
+      merkleRoot: snapshot.merkleRoot,
+      snapshotId: snapshot.id,
     };
   }
 }

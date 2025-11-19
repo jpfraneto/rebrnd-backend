@@ -47,10 +47,8 @@ export const getConfig = () => ({
     signerUuid: process.env.NEYNAR_SIGNER_UUID,
   },
   blockchain: {
-    baseRpcUrl: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
-    contractAddress:
-      process.env.CONTRACT_ADDRESS ||
-      '0x570b1138AFc0F40B990792FA134005e32a9f0503',
+    baseRpcUrl: process.env.BASE_RPC_URL,
+    contractAddress: process.env.CONTRACT_ADDRESS,
     backendPrivateKey: process.env.PRIVATE_KEY,
     brndTokenAddress:
       process.env.BRND_TOKEN_ADDRESS ||
@@ -58,6 +56,9 @@ export const getConfig = () => ({
     tellerVaultAddress:
       process.env.TELLER_VAULT_ADDRESS ||
       '0x19d1872d8328b23a219e11d3d6eeee1954a88f88',
+    airdropContractAddress:
+      process.env.AIRDROP_CONTRACT_ADDRESS ||
+      '0x776fA62dc8E6Dd37ec2d90e9d12E22efc462c812',
   },
   notifications: {
     enabled: process.env.NOTIFICATIONS_ENABLED !== 'false',

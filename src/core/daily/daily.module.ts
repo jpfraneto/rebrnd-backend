@@ -4,7 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DailyService } from './daily.service';
 import { DailyController } from './daily.controller';
 import { UserService } from '../user/services';
-import { AirdropService } from '../airdrop/services/airdrop.service';
+import { AirdropModule } from '../airdrop/airdrop.module';
 
 import {
   User,
@@ -12,6 +12,7 @@ import {
   UserDailyActions,
   Brand,
   AirdropScore,
+  AirdropSnapshot,
 } from '../../models';
 
 @Module({
@@ -22,10 +23,12 @@ import {
       UserDailyActions,
       Brand,
       AirdropScore,
+      AirdropSnapshot,
     ]),
+    AirdropModule, // Import AirdropModule to access AirdropService
   ],
   controllers: [DailyController],
-  providers: [DailyService, UserService, AirdropService],
+  providers: [DailyService, UserService],
   exports: [DailyService],
 })
 export class DailyModule {}

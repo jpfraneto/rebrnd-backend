@@ -1,13 +1,19 @@
-import { Controller, Get, UseGuards, Res, Query } from '@nestjs/common';
+import { Controller, Get, Post, UseGuards, Res, Query, Body } from '@nestjs/common';
 import { Response } from 'express';
 import { AuthorizationGuard, QuickAuthPayload } from '../../security/guards';
 import { Session } from '../../security/decorators';
 import { hasResponse, hasError, HttpStatus } from '../../utils/http';
 import { AirdropService } from './services/airdrop.service';
+import { AirdropContractService } from './services/airdrop-contract.service';
+import { SignatureService } from '../blockchain/services/signature.service';
 
 @Controller('airdrop-service')
 export class AirdropController {
-  constructor(private readonly airdropService: AirdropService) {}
+  constructor(
+    private readonly airdropService: AirdropService,
+    private readonly airdropContractService: AirdropContractService,
+    private readonly signatureService: SignatureService,
+  ) {}
 
   @Get('check-user')
   @UseGuards(AuthorizationGuard)
@@ -388,6 +394,218 @@ export class AirdropController {
         HttpStatus.INTERNAL_SERVER_ERROR,
         'calculateAllUsers',
         'Error calculating airdrop for all users',
+      );
+    }
+  }
+
+  /**
+   * Check if user can claim airdrop
+   * Returns eligibility status, contract status, and claim information
+   */
+  @Get('claim-status')
+  @UseGuards(AuthorizationGuard)
+  async getClaimStatus(
+    @Session() user: QuickAuthPayload,
+    @Res() res: Response,
+  ) {
+    try {
+      const fid = user.sub;
+
+      console.log(`🔍 [AIRDROP] Checking claim status for FID: ${fid}`);
+
+      // Get contract status
+      const contractStatus = await this.airdropContractService.getContractStatus();
+
+      // Check if merkle root is set
+      const isMerkleRootSet = await this.airdropContractService.isMerkleRootSet();
+
+      // Check if user has already claimed
+      const hasClaimed = await this.airdropContractService.hasClaimed(fid);
+
+      // Check if user is in snapshot
+      let proofData = null;
+      try {
+        proofData = await this.airdropService.generateMerkleProof(fid);
+      } catch (error) {
+        // User not in snapshot or snapshot doesn't exist
+        console.log(`⚠️ [AIRDROP] FID ${fid} not in snapshot: ${error.message}`);
+      }
+
+      // Determine eligibility
+      let canClaim = false;
+      let reason = '';
+
+      if (hasClaimed) {
+        reason = 'Already claimed';
+      } else if (!contractStatus.claimingEnabled) {
+        reason = 'Claiming is not enabled yet';
+      } else if (!isMerkleRootSet) {
+        reason = 'Merkle root not set on contract';
+      } else if (!proofData) {
+        reason = 'Not eligible for airdrop (not in top 1111 users)';
+      } else {
+        canClaim = true;
+        reason = 'Eligible to claim';
+      }
+
+      return hasResponse(res, {
+        fid,
+        canClaim,
+        reason,
+        hasClaimed,
+        contractStatus: {
+          merkleRootSet: isMerkleRootSet,
+          claimingEnabled: contractStatus.claimingEnabled,
+          totalClaimed: contractStatus.totalClaimed,
+          escrowBalance: contractStatus.escrowBalance,
+          allowance: contractStatus.allowance,
+        },
+        eligibility: {
+          inSnapshot: !!proofData,
+          amount: proofData?.amount || null,
+        },
+      });
+    } catch (error) {
+      console.error('Error checking claim status:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'getClaimStatus',
+        error.message || 'Failed to check claim status',
+      );
+    }
+  }
+
+  /**
+   * Generate airdrop claim signature and merkle proof
+   * Verifies wallet belongs to FID via Neynar, then generates signature
+   */
+  @Post('claim-signature')
+  @UseGuards(AuthorizationGuard)
+  async getAirdropClaimSignature(
+    @Session() user: QuickAuthPayload,
+    @Body() body: { walletAddress: string; snapshotId?: number },
+    @Res() res: Response,
+  ) {
+    try {
+      const { walletAddress, snapshotId } = body;
+      const fid = user.sub;
+
+      if (!walletAddress || !walletAddress.startsWith('0x')) {
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'getAirdropClaimSignature',
+          'Valid wallet address is required',
+        );
+      }
+
+      console.log(
+        `🔐 [AIRDROP] Generating claim signature for FID: ${fid}, Wallet: ${walletAddress}`,
+      );
+
+      // Check contract status first
+      const contractStatus = await this.airdropContractService.getContractStatus();
+      const isMerkleRootSet = await this.airdropContractService.isMerkleRootSet();
+
+      if (!contractStatus.claimingEnabled) {
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'getAirdropClaimSignature',
+          'Claiming is not enabled on the contract yet',
+        );
+      }
+
+      if (!isMerkleRootSet) {
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'getAirdropClaimSignature',
+          'Merkle root is not set on the contract yet. Please wait for the snapshot to be set.',
+        );
+      }
+
+      // Check if already claimed
+      const hasClaimed = await this.airdropContractService.hasClaimed(fid);
+      if (hasClaimed) {
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'getAirdropClaimSignature',
+          'Airdrop already claimed for this FID',
+        );
+      }
+
+      // Get merkle proof for this FID
+      const proofData = await this.airdropService.generateMerkleProof(
+        fid,
+        snapshotId,
+      );
+
+      if (!proofData) {
+        return hasError(
+          res,
+          HttpStatus.NOT_FOUND,
+          'getAirdropClaimSignature',
+          'FID not found in airdrop snapshot. You are not eligible for the airdrop.',
+        );
+      }
+
+      // Verify merkle root matches contract
+      if (proofData.merkleRoot !== contractStatus.merkleRoot) {
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'getAirdropClaimSignature',
+          'Merkle root mismatch. The snapshot may have been updated. Please try again.',
+        );
+      }
+
+      // Generate EIP-712 signature (this verifies wallet belongs to FID via Neynar)
+      const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
+
+      const signature = await this.signatureService.generateAirdropClaimSignature(
+        fid,
+        walletAddress,
+        proofData.amount,
+        proofData.merkleRoot,
+        deadline,
+      );
+
+      console.log(`✅ [AIRDROP] Claim signature generated successfully`);
+
+      return hasResponse(res, {
+        fid,
+        walletAddress,
+        amount: proofData.amount,
+        merkleRoot: proofData.merkleRoot,
+        proof: proofData.proof,
+        signature,
+        deadline,
+        snapshotId: proofData.snapshotId,
+        contractAddress: '0x776fA62dc8E6Dd37ec2d90e9d12E22efc462c812',
+        message:
+          'Use these values to call claimAirdrop() on the smart contract',
+      });
+    } catch (error) {
+      console.error('Error generating airdrop claim signature:', error);
+      
+      // Handle specific error cases
+      if (error.message?.includes('not verified for this FID')) {
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'getAirdropClaimSignature',
+          'Wallet address is not verified for this FID on Farcaster. Please verify your wallet address on Farcaster first.',
+        );
+      }
+
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'getAirdropClaimSignature',
+        error.message || 'Failed to generate claim signature',
       );
     }
   }
