@@ -1,5 +1,5 @@
 // Dependencies
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 // Controllers
@@ -12,10 +12,12 @@ import { UserService } from '../user/services';
 // Models
 import { Brand, User, UserBrandVotes, UserDailyActions, AirdropSnapshot, AirdropScore } from '../../models';
 import { AdminGuard } from 'src/security/guards';
+import { AirdropModule } from '../airdrop/airdrop.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, Brand, UserBrandVotes, UserDailyActions, AirdropSnapshot, AirdropScore]),
+    forwardRef(() => AirdropModule),
   ],
   controllers: [AuthController],
   providers: [AuthService, UserService, AdminGuard],

@@ -1,11 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { AirdropScore, AirdropSnapshot, User } from '../../../models';
-import { getConfig } from '../../../security/config';
+import {
+  AirdropScore,
+  AirdropSnapshot,
+  AirdropLeaf,
+  User,
+} from '../../../models';
 import { MerkleTree } from 'merkletreejs';
-import keccak256 from 'keccak256';
-import { solidityPackedKeccak256 } from 'ethers';
+import { getConfig } from '../../../security/config';
+import { StandardMerkleTree } from '@openzeppelin/merkle-tree';
+import { keccak256, AbiCoder } from 'ethers';
+import { StandardMerkleTreeData } from '@openzeppelin/merkle-tree/dist/standard';
 
 export interface AirdropMultipliers {
   followAccounts: number;
@@ -65,7 +71,9 @@ export class AirdropService {
     @InjectRepository(AirdropScore)
     private readonly airdropScoreRepository: Repository<AirdropScore>,
     @InjectRepository(AirdropSnapshot)
-    private readonly airdropSnapshotRepository: Repository<AirdropSnapshot>,
+    public readonly airdropSnapshotRepository: Repository<AirdropSnapshot>,
+    @InjectRepository(AirdropLeaf)
+    private readonly airdropLeafRepository: Repository<AirdropLeaf>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
@@ -130,11 +138,13 @@ export class AirdropService {
     // Get the actual tokenAllocation and percentage from the saved airdrop score
     let percentage = 0;
     let tokenAllocation = 0;
-    
+
     if (existingAirdropScore) {
       percentage = Number(existingAirdropScore.percentage) || 0;
       tokenAllocation = Number(existingAirdropScore.tokenAllocation) || 0;
-      console.log(`📊 [AIRDROP] Using existing token allocation: ${tokenAllocation.toLocaleString()}, percentage: ${percentage.toFixed(6)}%`);
+      console.log(
+        `📊 [AIRDROP] Using existing token allocation: ${tokenAllocation.toLocaleString()}, percentage: ${percentage.toFixed(6)}%`,
+      );
     }
 
     // STEP 5: Calculate leaderboard position based on new airdrop score
@@ -2076,107 +2086,223 @@ export class AirdropService {
   }
 
   /**
-   * Generates an airdrop snapshot (merkle tree) for the top 1111 users
-   * Each leaf in the merkle tree is: keccak256(abi.encodePacked(fid, amount))
-   * This allows FID-based claiming on the smart contract
+   * ------------------------------------------------------------------
+   * MERKLE TREE & SNAPSHOT GENERATION
+   * Uses proper keccak256(abi.encode(fid, amount)) for smart contract compatibility
+   * CRITICAL: Contract uses abi.encode (not abi.encodePacked), which pads values to 32 bytes
+   * ------------------------------------------------------------------
    */
+
   async generateAirdropSnapshot(): Promise<{
     merkleRoot: string;
     totalUsers: number;
     totalTokens: string;
+    totalTokensFormatted: string;
     snapshotId: number;
-    treeData: any;
+    migratedUsers: number;
   }> {
-    console.log('🌳 [AIRDROP SNAPSHOT] Starting snapshot generation...');
-
-    // Get top 1111 users from leaderboard
-    const topUsers = await this.getLeaderboard(this.TOP_USERS);
+    console.log('----------------------------------------------------');
     console.log(
-      `📊 [AIRDROP SNAPSHOT] Found ${topUsers.length} users in leaderboard`,
+      '🌳 [START] Starting Airdrop Snapshot Generation (MerkleTreeJS)',
     );
+    console.log('----------------------------------------------------');
+
+    // 1. Delete all existing snapshots (leaves will be deleted via CASCADE)
+    const existingSnapshotsCount = await this.airdropSnapshotRepository.count();
+    if (existingSnapshotsCount > 0) {
+      console.log(
+        `🗑️  [CLEANUP] Deleting ${existingSnapshotsCount} existing snapshot(s) and their leaves...`,
+      );
+      await this.airdropSnapshotRepository
+        .createQueryBuilder()
+        .delete()
+        .execute();
+      console.log(`✅ [CLEANUP] Deleted all existing snapshots`);
+    } else {
+      console.log(`ℹ️  [CLEANUP] No existing snapshots to delete`);
+    }
+
+    const TOP_USERS = 1111;
+
+    // 2. Get top users from airdrop scores
+    // Assuming getLeaderboard is available in your class context
+    const topUsers: AirdropScore[] = await this.getLeaderboard(TOP_USERS);
+    console.log(`📊 [LEADERBOARD] Found ${topUsers.length} users for snapshot`);
 
     if (topUsers.length === 0) {
       throw new Error('No users found in leaderboard');
     }
 
-    // Build leaves array: each leaf is keccak256(abi.encodePacked(fid, amount))
-    const leaves: Array<{
+    // 3. Prepare data for merkle tree and leaves
+    let totalTokensFormatted = 0;
+    const abiCoder = AbiCoder.defaultAbiCoder();
+
+    const leafData: Array<{
       fid: number;
-      amount: string;
-      leaf: string;
+      baseAmount: number;
+      percentage: number;
+      finalScore: number;
+      rank: number;
+      leafHash: string;
     }> = [];
 
-    let totalTokens = BigInt(0);
+    // Loop through users, calculate baseAmount, and compute the explicit leaf hash
+    topUsers.forEach((user, index) => {
+      const tokenAllocation = Number(user.tokenAllocation);
+      const baseAmount = tokenAllocation; // Use whole number
 
-    for (const airdropScore of topUsers) {
-      const fid = airdropScore.fid;
-      const amount = BigInt(Math.round(Number(airdropScore.tokenAllocation)));
+      totalTokensFormatted += tokenAllocation;
 
-      // Create leaf: keccak256(abi.encodePacked(fid, amount))
-      // Use ethers' solidityPackedKeccak256 to match Solidity's abi.encodePacked exactly
-      const leafHash = solidityPackedKeccak256(
+      // --- CRITICAL: MANUAL HASHING FOR CONTRACT COMPATIBILITY ---
+      // Corresponds to Solidity: keccak256(abi.encode(fid, baseAmount))
+      const encoded = abiCoder.encode(
         ['uint256', 'uint256'],
-        [BigInt(fid), amount],
+        [BigInt(user.fid), BigInt(baseAmount)],
       );
 
-      leaves.push({
-        fid,
-        amount: amount.toString(),
-        leaf: leafHash, // Already in hex format from solidityPackedKeccak256
+      // We produce a 0x-prefixed hex string
+      const leafHash = keccak256(encoded);
+      // -----------------------------------------------------------
+
+      leafData.push({
+        fid: user.fid,
+        baseAmount: baseAmount,
+        percentage: Number(user.percentage),
+        finalScore: Number(user.finalScore),
+        rank: index + 1,
+        leafHash,
       });
-
-      totalTokens += amount;
-    }
-
-    console.log(
-      `🌿 [AIRDROP SNAPSHOT] Created ${leaves.length} leaves, total tokens: ${totalTokens.toString()}`,
-    );
-
-    // Build merkle tree
-    const leafHashes = leaves.map((l) =>
-      Buffer.from(l.leaf.startsWith('0x') ? l.leaf.slice(2) : l.leaf, 'hex'),
-    );
-    const tree = new MerkleTree(leafHashes, keccak256, {
-      sortPairs: true, // Sort pairs for consistent tree structure
     });
 
-    const merkleRoot = '0x' + tree.getRoot().toString('hex');
-    console.log(`🌳 [AIRDROP SNAPSHOT] Merkle root generated: ${merkleRoot}`);
+    console.log(
+      `💰 [TOKENS] Total: ${totalTokensFormatted.toLocaleString()} tokens (base amount)`,
+    );
 
-    // Store snapshot in database
+    // 4. Generate Merkle Tree
+    // CRITICAL: We must sort the input data by FID first to ensure deterministic ordering
+    // when we rebuild the tree later for proofs.
+    const sortedLeafData = leafData.sort((a, b) => a.fid - b.fid);
+
+    // Extract just the hashes for the tree generation
+    const leafHashes = sortedLeafData.map((x) => x.leafHash);
+
+    console.log(
+      `🌿 [TREE] Creating MerkleTree from ${leafHashes.length} leaves with sortPairs: true`,
+    );
+
+    // CRITICAL: sortPairs: true makes it compatible with OpenZeppelin's verify()
+    const tree = new MerkleTree(leafHashes, keccak256, {
+      sortPairs: true,
+    });
+
+    const merkleRoot = tree.getHexRoot();
+
+    console.log(`🔑 [MERKLE ROOT] Generated: ${merkleRoot}`);
+
+    // 5. Create snapshot record
     const snapshot = this.airdropSnapshotRepository.create({
       merkleRoot,
-      totalUsers: leaves.length,
-      totalTokens: totalTokens.toString(),
-      treeData: {
-        leaves,
-        // Don't store the full tree object (it's large), we can rebuild it from leaves
-      },
+      totalUsers: leafData.length,
+      totalTokens: totalTokensFormatted.toString(),
+      totalTokensFormatted: totalTokensFormatted.toString(),
       snapshotDate: new Date(),
+      isActive: true,
+      isFrozen: false,
     });
 
     const savedSnapshot = await this.airdropSnapshotRepository.save(snapshot);
+    console.log(`💾 [SNAPSHOT] Saved with ID: ${savedSnapshot.id}`);
+
+    // 6. Prepare leaf data for bulk insert
     console.log(
-      `💾 [AIRDROP SNAPSHOT] Snapshot saved with ID: ${savedSnapshot.id}`,
+      `🍃 [LEAVES] Preparing to bulk insert ${sortedLeafData.length} leaf records...`,
     );
+
+    // 7. Bulk insert leaves using raw SQL for maximum performance
+    // Using transaction to ensure data integrity
+    try {
+      await this.airdropLeafRepository.manager.transaction(
+        async (transactionalEntityManager) => {
+          // Use larger batch size for raw SQL (MySQL can handle ~1000-2000 placeholders per query)
+          // Each row has 7 values, so 500 rows = 3500 placeholders (safe limit)
+          const BATCH_SIZE = 500;
+          const totalBatches = Math.ceil(sortedLeafData.length / BATCH_SIZE);
+
+          console.log(
+            `🍃 [LEAVES] Inserting in ${totalBatches} batch(es) of up to ${BATCH_SIZE} records each...`,
+          );
+
+          for (let i = 0; i < totalBatches; i++) {
+            const start = i * BATCH_SIZE;
+            const end = Math.min(start + BATCH_SIZE, sortedLeafData.length);
+            const batch = sortedLeafData.slice(start, end);
+
+            // Build parameterized query with VALUES clause
+            // Format: (?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?), ...
+            const placeholders: string[] = [];
+            const values: any[] = [];
+
+            batch.forEach((leaf) => {
+              placeholders.push('(?, ?, ?, ?, ?, ?, ?)');
+              values.push(
+                savedSnapshot.id, // snapshotId
+                leaf.fid, // fid
+                leaf.baseAmount, // baseAmount
+                leaf.leafHash, // leafHash
+                leaf.percentage, // percentage (decimal)
+                leaf.rank, // leaderboardRank
+                leaf.finalScore, // finalScore (decimal)
+              );
+            });
+
+            // Note: createdAt will be set automatically by MySQL's DEFAULT CURRENT_TIMESTAMP
+            const sql = `
+              INSERT INTO airdrop_leaves 
+              (snapshotId, fid, baseAmount, leafHash, percentage, leaderboardRank, finalScore)
+              VALUES ${placeholders.join(', ')}
+            `;
+
+            await transactionalEntityManager.query(sql, values);
+
+            console.log(
+              `🍃 [LEAVES] ✅ Batch ${i + 1}/${totalBatches} saved (${batch.length} records)`,
+            );
+          }
+
+          console.log(
+            `🍃 [LEAVES] ✅ Successfully inserted all ${sortedLeafData.length} leaf records`,
+          );
+        },
+      );
+    } catch (error) {
+      console.error(`❌ [LEAVES] Failed to save leaf records:`, error);
+      throw error;
+    }
+
+    // 8. Freeze the snapshot
+    await this.airdropSnapshotRepository.update(
+      { id: savedSnapshot.id },
+      { isFrozen: true },
+    );
+
+    console.log('✅ [COMPLETE] Airdrop snapshot generation complete');
+    console.log('====================================================');
+    console.log(`🆔 Snapshot ID: ${savedSnapshot.id}`);
+    console.log(`🔑 Merkle Root: ${merkleRoot}`);
+    console.log('====================================================');
 
     return {
       merkleRoot,
-      totalUsers: leaves.length,
-      totalTokens: totalTokens.toString(),
+      totalUsers: leafData.length,
+      totalTokens: totalTokensFormatted.toString(),
+      totalTokensFormatted: totalTokensFormatted.toString(),
       snapshotId: savedSnapshot.id,
-      treeData: {
-        leaves: leaves.map((l) => ({
-          fid: l.fid,
-          amount: l.amount,
-        })),
-      },
+      migratedUsers: leafData.length,
     };
   }
 
   /**
-   * Generates a merkle proof for a specific FID
-   * Used when a user wants to claim their airdrop
+   * Generates a merkle proof using 'merkletreejs'
    */
   async generateMerkleProof(
     fid: number,
@@ -2188,52 +2314,75 @@ export class AirdropService {
     merkleRoot: string;
     snapshotId: number;
   } | null> {
-    console.log(
-      `🔍 [MERKLE PROOF] Generating proof for FID: ${fid}, snapshotId: ${snapshotId || 'latest'}`,
-    );
+    console.log(`🔍 [PROOF] Generating proof for FID: ${fid}`);
 
-    // Get the latest snapshot if no snapshotId provided
-    let snapshot: AirdropSnapshot;
-    if (snapshotId) {
-      snapshot = await this.airdropSnapshotRepository.findOne({
-        where: { id: snapshotId },
-      });
-    } else {
-      snapshot = await this.airdropSnapshotRepository.findOne({
-        order: { createdAt: 'DESC' },
-      });
-    }
+    // 1. Get the active snapshot and its leaves
+    const snapshot = await this.airdropSnapshotRepository.findOne({
+      where: snapshotId ? { id: snapshotId } : { isActive: true },
+      relations: ['leaves'],
+    });
 
     if (!snapshot) {
-      throw new Error('No airdrop snapshot found');
-    }
-
-    // Find the leaf for this FID
-    const leafData = snapshot.treeData.leaves.find((l) => l.fid === fid);
-    if (!leafData) {
-      console.log(`❌ [MERKLE PROOF] FID ${fid} not found in snapshot`);
+      console.log(
+        `❌ [PROOF] No ${snapshotId ? 'snapshot with ID ' + snapshotId : 'active snapshot'} found`,
+      );
       return null;
     }
 
-    // Rebuild the merkle tree from stored leaves
-    const leafHashes = snapshot.treeData.leaves.map((l) =>
-      Buffer.from(l.leaf.slice(2), 'hex'),
+    // 2. Find the specific user's leaf
+    const userLeaf = snapshot.leaves.find((leaf) => leaf.fid === fid);
+    if (!userLeaf) {
+      console.log(`❌ [PROOF] FID ${fid} not found in snapshot ${snapshot.id}`);
+      return null;
+    }
+
+    console.log(
+      `🎯 [PROOF] Found user leaf in database: FID ${userLeaf.fid}, Amount ${userLeaf.baseAmount}`,
     );
-    const tree = new MerkleTree(leafHashes, keccak256, {
+
+    // 3. Rebuild Merkle Tree
+    // CRITICAL: We must sort the leaves exactly as we did during generation
+    const sortedLeaves = snapshot.leaves.sort((a, b) => a.fid - b.fid);
+
+    const allLeafHashes = sortedLeaves.map((l) => l.leafHash);
+
+    console.log(
+      `🔍 [DEBUG] Rebuilding tree with ${allLeafHashes.length} leaves (sortPairs: true)`,
+    );
+
+    const tree = new MerkleTree(allLeafHashes, keccak256, {
       sortPairs: true,
     });
 
-    // Get the proof
-    const leafHash = Buffer.from(leafData.leaf.slice(2), 'hex');
-    const proof = tree.getProof(leafHash).map((p) => '0x' + p.data.toString('hex'));
+    // 4. Verify Root Matches Database
+    const rebuiltRoot = tree.getHexRoot();
+    if (rebuiltRoot !== snapshot.merkleRoot) {
+      console.error(`❌ [PROOF] Tree reconstruction failed!`);
+      console.error(`Expected root: ${snapshot.merkleRoot}`);
+      console.error(`Rebuilt root: ${rebuiltRoot}`);
+      throw new Error('Merkle tree reconstruction failed - roots do not match');
+    }
+    console.log(`✅ [VERIFICATION] Root matches: ${rebuiltRoot}`);
 
-    console.log(
-      `✅ [MERKLE PROOF] Generated proof for FID ${fid}, amount: ${leafData.amount}`,
-    );
+    // 5. Generate Proof
+    // We use the stored leafHash directly, because that's what the tree is built of.
+    const targetLeaf = userLeaf.leafHash;
+    const proof = tree.getHexProof(targetLeaf);
+
+    console.log(`🔢 [PROOF] Generated proof array length: ${proof.length}`);
+
+    // 6. Local Verification
+    const isValid = tree.verify(proof, targetLeaf, rebuiltRoot);
+    console.log(`🔍 [PROOF] Local verification result: ${isValid}`);
+
+    if (!isValid) {
+      console.error(`❌ [PROOF] Local verification failed for FID ${fid}`);
+      return null;
+    }
 
     return {
       fid,
-      amount: leafData.amount,
+      amount: userLeaf.baseAmount.toString(),
       proof,
       merkleRoot: snapshot.merkleRoot,
       snapshotId: snapshot.id,

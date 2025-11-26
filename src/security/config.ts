@@ -56,12 +56,10 @@ export const getConfig = () => ({
     tellerVaultAddress:
       process.env.TELLER_VAULT_ADDRESS ||
       '0x19d1872d8328b23a219e11d3d6eeee1954a88f88',
-    airdropContractAddress:
-      process.env.AIRDROP_CONTRACT_ADDRESS ||
-      '0x776fA62dc8E6Dd37ec2d90e9d12E22efc462c812',
+    airdropContractAddress: process.env.AIRDROP_CONTRACT_ADDRESS,
   },
   notifications: {
-    enabled: process.env.NOTIFICATIONS_ENABLED !== 'false',
+    enabled: false,
     baseUrl: process.env.NOTIFICATION_BASE_URL || 'https://brnd.land',
     miniappUrl: process.env.MINIAPP_URL || 'https://brnd.land',
     dailyReminderHour: parseInt(process.env.DAILY_REMINDER_HOUR || '10', 10),

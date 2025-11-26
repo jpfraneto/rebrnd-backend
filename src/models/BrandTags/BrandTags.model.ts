@@ -3,9 +3,6 @@
  */
 import { Entity, PrimaryGeneratedColumn, ManyToOne } from 'typeorm';
 
-import { Brand } from '../Brand';
-import { Tag } from '../Tag';
-
 /**
  * @class BrandTags
  * @classdesc BrandTags class represents the tags of a brand in the system.
@@ -15,9 +12,9 @@ export class BrandTags {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @ManyToOne(() => Tag, (tag) => tag.brandTags)
-  tag: Tag;
+  @ManyToOne('Tag', 'brandTags')
+  tag: any;
 
-  @ManyToOne(() => Brand, (brand) => brand.brandTags)
-  brand: Brand;
+  @ManyToOne('Brand', 'brandTags')
+  brand: any;
 }

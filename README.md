@@ -90,17 +90,20 @@ The backend includes a comprehensive system for managing brand uploads to the sm
 
 ```bash
 # Required for contract operations
-STORIES_IN_MOTION_V5_ADDRESS=0x...  # V5 contract address
+BRND_SEASON_1_ADDRESS=0x...  # V5 contract address
 ADMIN_PRIVATE_KEY=0x...             # Admin wallet private key for uploads
 ```
 
 ### Admin Endpoints (Unprotected for Testing)
 
 #### Check Upload Status
+
 ```bash
 GET /admin-service/brands/upload-status
 ```
+
 Returns upload progress and statistics:
+
 ```json
 {
   "totalBrands": 150,
@@ -112,6 +115,7 @@ Returns upload progress and statistics:
 ```
 
 #### Upload Limited Brands for Testing
+
 ```bash
 POST /admin-service/brands/upload-to-contract-testing
 Content-Type: application/json
@@ -120,53 +124,62 @@ Content-Type: application/json
   "limit": 20
 }
 ```
+
 - Uploads specific number of non-uploaded brands (default: 20)
 - Maintains database ID order for consistent contract IDs
 - Tracks successful uploads and marks brands as uploaded
 - **Does not reset flags** - incremental upload
 
 #### Upload All Brands (Full Deployment)
+
 ```bash
 GET /admin-service/brands/upload-to-contract
 ```
+
 - Resets all upload flags first (fresh contract deployment)
 - Uploads all non-uploaded brands to contract
 - Use when deploying a new contract version
 
 #### Reset Upload Flags
+
 ```bash
 POST /admin-service/brands/reset-upload-flags
 ```
+
 - Marks all brands as non-uploaded (`isUploadedToContract = false`)
 - Use before uploading to a new contract deployment
 - Prepares database for fresh upload
 
 #### Check Contract vs Database Status
+
 ```bash
 GET /admin-service/brands/contract-status
 ```
+
 Compares brands in database vs smart contract.
 
 ### Testing Workflow
 
 1. **Deploy New Contract** → Reset upload flags
+
    ```bash
    POST /admin-service/brands/reset-upload-flags
    ```
 
 2. **Upload Test Brands** → Upload 20 brands for frontend testing
+
    ```bash
    POST /admin-service/brands/upload-to-contract-testing
    {"limit": 20}
    ```
 
 3. **Check Progress** → Monitor upload status
+
    ```bash
    GET /admin-service/brands/upload-status
    ```
 
 4. **Test Frontend** → Only uploaded brands will appear in voting
-   
 5. **Upload More** → Continue with additional batches as needed
    ```bash
    POST /admin-service/brands/upload-to-contract-testing
@@ -176,12 +189,15 @@ Compares brands in database vs smart contract.
 ### Implementation Details
 
 #### Database Schema
+
 ```sql
 ALTER TABLE brands ADD COLUMN isUploadedToContract BOOLEAN DEFAULT FALSE;
 ```
 
 #### Voting Filter
+
 All brand listing endpoints automatically filter to only show uploaded brands:
+
 ```typescript
 where: {
   banned: 0,
@@ -190,6 +206,7 @@ where: {
 ```
 
 #### Upload Process
+
 1. **Query brands** in database ID order (`ORDER BY id ASC`)
 2. **Filter non-uploaded** (`isUploadedToContract = false`)
 3. **Batch upload** to contract (20 brands per transaction)
@@ -197,6 +214,7 @@ where: {
 5. **Consistent IDs** ensure Database Brand ID = Contract Brand ID
 
 #### Gas Optimization
+
 - **Batch uploads**: 20 brands per transaction for gas efficiency
 - **Incremental uploads**: Only upload non-uploaded brands
 - **Testing limits**: Upload small batches to control gas costs

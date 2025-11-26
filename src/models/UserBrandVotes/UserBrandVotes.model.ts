@@ -3,9 +3,6 @@
  */
 import { Entity, Column, PrimaryGeneratedColumn, ManyToOne } from 'typeorm';
 
-import { User } from '../User';
-import { Brand } from '../Brand';
-
 /**
  * @class UserBrandVotes
  * @classdesc UserBrandVotes class represents the votes of the users for each brands in the system.
@@ -15,17 +12,17 @@ export class UserBrandVotes {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => User, (user) => user.userBrandVotes)
-  user: User;
+  @ManyToOne('User', 'userBrandVotes')
+  user: any;
 
-  @ManyToOne(() => Brand, (brand) => brand.userBrandVotes1)
-  brand1: Brand;
+  @ManyToOne('Brand', 'userBrandVotes1')
+  brand1: any;
 
-  @ManyToOne(() => Brand, (brand) => brand.userBrandVotes2)
-  brand2: Brand;
+  @ManyToOne('Brand', 'userBrandVotes2')
+  brand2: any;
 
-  @ManyToOne(() => Brand, (brand) => brand.userBrandVotes3)
-  brand3: Brand;
+  @ManyToOne('Brand', 'userBrandVotes3')
+  brand3: any;
 
   @Column()
   date: Date;

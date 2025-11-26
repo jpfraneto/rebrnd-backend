@@ -103,10 +103,6 @@ export class AuthController {
         }
       }
 
-      console.log(
-        'FINISHING THE CALL TO THE ME ENDPOINT AND SENDING BACK THIS RESPONSE DATA',
-      );
-
       // Comprehensive response with all precise user data
       const responseData = {
         // Basic user info
@@ -154,6 +150,12 @@ export class AuthController {
               imageUrl: userData.favoriteBrand.imageUrl,
             }
           : null,
+
+        // Airdrop eligibility info
+        // isEligible: true if user has an airdrop score
+        // snapshotExists: true if an airdrop snapshot has been created
+        // If snapshotExists: true and isEligible: false, user is not eligible
+        airdrop: userData.airdrop,
 
         // Meta
         createdAt: userData.user.createdAt,

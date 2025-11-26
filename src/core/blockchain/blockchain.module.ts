@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { BlockchainController } from './blockchain.controller';
@@ -36,7 +36,7 @@ import {
       AirdropSnapshot,
       AirdropScore,
     ]),
-    AuthModule,
+    forwardRef(() => AuthModule),
   ],
   controllers: [BlockchainController],
   providers: [

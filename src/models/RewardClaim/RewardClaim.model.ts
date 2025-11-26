@@ -10,7 +10,6 @@ import {
 
 @Entity({ name: 'reward_claims' })
 @Unique(['userFid', 'day'])
-@Index(['userFid', 'day'])
 export class RewardClaim {
   @PrimaryGeneratedColumn()
   id: number;

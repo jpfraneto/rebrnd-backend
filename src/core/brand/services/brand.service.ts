@@ -790,10 +790,13 @@ export class BrandService {
         info = [];
       }
 
+      // Return the structure expected by the frontend
       return {
-        ...brand,
-        currentRanking,
-        casts: info,
+        brand: {
+          ...brand,
+          currentRanking,
+        },
+        casts: info || [],
         fanCount: totalFans,
       };
     } catch (error) {

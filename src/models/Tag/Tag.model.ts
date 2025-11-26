@@ -10,8 +10,6 @@ import {
   OneToMany,
 } from 'typeorm';
 
-import { BrandTags } from '../BrandTags';
-
 /**
  * @class Tag
  * @classdesc Tag class represents a Tag in the system.
@@ -30,6 +28,6 @@ export class Tag {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  @OneToMany(() => BrandTags, (brandTags) => brandTags.brand)
-  brandTags: BrandTags[];
+  @OneToMany('BrandTags', 'tag')
+  brandTags: any[];
 }

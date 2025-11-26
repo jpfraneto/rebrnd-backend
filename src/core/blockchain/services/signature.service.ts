@@ -17,10 +17,8 @@ import { logger } from '../../../main';
 
 @Injectable()
 export class SignatureService {
-  private readonly CONTRACT_ADDRESS =
-    process.env.STORIES_IN_MOTION_V5_ADDRESS ||
-    '0xbcd8b5cd91d88d105a6f4df007a157615aba862d';
-  private readonly DOMAIN_NAME = 'StoriesInMotionV7';
+  private readonly CONTRACT_ADDRESS = process.env.BRND_SEASON_1_ADDRESS;
+  private readonly DOMAIN_NAME = 'BRNDSEASON1';
   private readonly DOMAIN_VERSION = '1';
   private readonly CHAIN_ID = 8453; // Base mainnet
 
@@ -320,7 +318,7 @@ export class SignatureService {
     });
 
     const domain = {
-      name: 'StoriesInMotionV7',
+      name: 'BRNDSEASON1',
       version: '1',
       chainId: 8453,
       verifyingContract: this.CONTRACT_ADDRESS as `0x${string}`,
@@ -418,11 +416,12 @@ export class SignatureService {
   /**
    * Generates EIP-712 signature for airdrop claim
    * Verifies wallet belongs to FID via Neynar before signing
+   * UPDATED: Now uses baseAmount (whole number) instead of Wei amount
    */
   async generateAirdropClaimSignature(
     fid: number,
     walletAddress: string,
-    amount: string,
+    baseAmount: number,
     merkleRoot: string,
     deadline: number,
   ): Promise<string> {
@@ -431,7 +430,11 @@ export class SignatureService {
     );
 
     // Validate wallet address format
-    if (!walletAddress || !walletAddress.startsWith('0x') || walletAddress.length !== 42) {
+    if (
+      !walletAddress ||
+      !walletAddress.startsWith('0x') ||
+      walletAddress.length !== 42
+    ) {
       throw new Error('Invalid wallet address');
     }
 
@@ -467,6 +470,10 @@ export class SignatureService {
 
     const account = privateKeyToAccount(privateKey);
 
+    const merkleRootBytes32 = merkleRoot as `0x${string}`;
+
+    logger.log(`� [AIRDROP SIGNATURE] Signer Address: ${account.address}`);
+
     // Get airdrop contract address from config
     const config = getConfig();
     const airdropContractAddress = config.blockchain.airdropContractAddress;
@@ -482,7 +489,7 @@ export class SignatureService {
     });
 
     const domain = {
-      name: 'StoriesInMotionAirdrop1',
+      name: 'BRNDAIRDROP1',
       version: '1',
       chainId: this.CHAIN_ID,
       verifyingContract: airdropContractAddress as `0x${string}`,
@@ -498,21 +505,19 @@ export class SignatureService {
       AirdropClaim: [
         { name: 'fid', type: 'uint256' },
         { name: 'wallet', type: 'address' },
-        { name: 'amount', type: 'uint256' },
+        { name: 'baseAmount', type: 'uint256' },
         { name: 'merkleRoot', type: 'bytes32' },
         { name: 'deadline', type: 'uint256' },
       ],
     } as const;
 
-    // Convert amount to BigInt
-    const amountBigInt = BigInt(amount);
-    const merkleRootBytes32 = merkleRoot as `0x${string}`;
+    // Convert baseAmount to Wei (multiply by 1e18)
 
     logger.log(`🔐 [AIRDROP SIGNATURE] Signing airdrop claim message with:`);
     logger.log(`   - FID: ${fid}`);
     logger.log(`   - Wallet: ${walletAddress}`);
-    logger.log(`   - Amount: ${amountBigInt.toString()}`);
-    logger.log(`   - Merkle Root: ${merkleRoot}`);
+    logger.log(`   - BaseAmount: ${baseAmount}`);
+    logger.log(`   - BaseAmount: ${baseAmount.toString()}`);
     logger.log(`   - Deadline: ${deadline}`);
 
     const signature = await walletClient.signTypedData({
@@ -523,13 +528,15 @@ export class SignatureService {
       message: {
         fid: BigInt(fid),
         wallet: walletAddress as `0x${string}`,
-        amount: amountBigInt,
+        baseAmount: BigInt(baseAmount),
         merkleRoot: merkleRootBytes32,
         deadline: BigInt(deadline),
       },
     });
 
-    logger.log(`✅ [AIRDROP SIGNATURE] Airdrop claim signature generated: ${signature}`);
+    logger.log(
+      `✅ [AIRDROP SIGNATURE] Airdrop claim signature generated: ${signature}`,
+    );
 
     return signature;
   }

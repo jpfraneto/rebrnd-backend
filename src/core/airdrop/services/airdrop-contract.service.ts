@@ -83,6 +83,8 @@ export class AirdropContractService {
     allowance: string;
   }> {
     try {
+      logger.log(`📞 [AIRDROP CONTRACT] Calling getStatus on ${this.contractAddress}`);
+      
       const result = (await this.publicClient.readContract({
         address: this.contractAddress as Address,
         abi: AIRDROP_CONTRACT_ABI,
@@ -96,15 +98,25 @@ export class AirdropContractService {
       const zeroRoot =
         '0x0000000000000000000000000000000000000000000000000000000000000000';
 
-      return {
+      const status = {
         merkleRoot: root === zeroRoot ? zeroRoot : root,
         claimingEnabled: enabled,
         totalClaimed: totalClaimedAmount.toString(),
         escrowBalance: escrowBalance.toString(),
         allowance: allowance.toString(),
       };
+
+      logger.log(`✅ [AIRDROP CONTRACT] Status retrieved successfully`, status);
+      return status;
     } catch (error) {
       logger.error('Error getting airdrop contract status:', error);
+      
+      // Provide more specific error information for JSON parsing issues
+      if (error.message?.includes('invalid character')) {
+        logger.error(`💥 [AIRDROP CONTRACT] RPC JSON parsing error - possibly malformed response from RPC provider`);
+        throw new Error('RPC provider returned malformed response. Please check RPC URL configuration.');
+      }
+      
       throw error;
     }
   }
@@ -114,6 +126,8 @@ export class AirdropContractService {
    */
   async hasClaimed(fid: number): Promise<boolean> {
     try {
+      logger.log(`📞 [AIRDROP CONTRACT] Checking if FID ${fid} has claimed`);
+      
       const result = (await this.publicClient.readContract({
         address: this.contractAddress as Address,
         abi: AIRDROP_CONTRACT_ABI,
@@ -121,10 +135,22 @@ export class AirdropContractService {
         args: [BigInt(fid)],
       } as any)) as boolean;
 
+      logger.log(`✅ [AIRDROP CONTRACT] FID ${fid} claim status: ${result}`);
       return result;
     } catch (error) {
       logger.error(`Error checking if FID ${fid} has claimed:`, error);
-      return false;
+      
+      // Provide more specific error information for JSON parsing issues
+      if (error.message?.includes('invalid character') || 
+          error.message?.includes('JSON') ||
+          error.message?.includes('Unexpected token') ||
+          error.name === 'SyntaxError') {
+        logger.error(`💥 [AIRDROP CONTRACT] RPC JSON parsing error for FID ${fid} claim check - possibly malformed response from RPC provider`);
+        logger.error(`RPC URL: ${getConfig().blockchain.baseRpcUrl}`);
+        throw new Error('RPC provider returned malformed response. Please check RPC URL configuration.');
+      }
+      
+      throw error;
     }
   }
 
@@ -133,12 +159,24 @@ export class AirdropContractService {
    */
   async isMerkleRootSet(): Promise<boolean> {
     try {
+      logger.log(`📞 [AIRDROP CONTRACT] Checking if merkle root is set`);
+      
       const status = await this.getContractStatus();
       const zeroRoot =
         '0x0000000000000000000000000000000000000000000000000000000000000000';
-      return status.merkleRoot !== zeroRoot;
+      const isSet = status.merkleRoot !== zeroRoot;
+      
+      logger.log(`✅ [AIRDROP CONTRACT] Merkle root set: ${isSet}, root: ${status.merkleRoot}`);
+      return isSet;
     } catch (error) {
       logger.error('Error checking merkle root:', error);
+      
+      // Provide more specific error information for JSON parsing issues
+      if (error.message?.includes('invalid character') || error.message?.includes('RPC provider returned malformed response')) {
+        logger.error(`💥 [AIRDROP CONTRACT] RPC JSON parsing error while checking merkle root - possibly malformed response from RPC provider`);
+        throw new Error('RPC provider returned malformed response. Please check RPC URL configuration.');
+      }
+      
       return false;
     }
   }

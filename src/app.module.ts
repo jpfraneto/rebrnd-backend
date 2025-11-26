@@ -17,6 +17,7 @@ import {
   UserDailyActions,
   AirdropScore,
   AirdropSnapshot,
+  AirdropLeaf,
   RewardClaim,
 } from './models';
 
@@ -40,6 +41,7 @@ import {
         UserDailyActions,
         AirdropScore,
         AirdropSnapshot,
+        AirdropLeaf,
         RewardClaim,
       ],
       // Important: Set synchronize to false in production for safety

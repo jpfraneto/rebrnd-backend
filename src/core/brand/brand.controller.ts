@@ -47,10 +47,10 @@ export class BrandController {
    * Retrieves a brand by its ID.
    *
    * @param {Brand['id']} id - The ID of the brand to retrieve.
-   * @returns {Promise<Brand | undefined>} The brand entity or undefined if not found.
+   * @returns {Promise<BrandResponse | undefined>} The brand response with brand, casts, and fanCount or undefined if not found.
    */
   @Get('/brand/:id')
-  getBrandById(
+  async getBrandById(
     @Param('id') id: Brand['id'],
   ): Promise<BrandResponse | undefined> {
     return this.brandService.getById(id, [], ['category']);
@@ -68,8 +68,12 @@ export class BrandController {
     @Res() res: Response,
   ): Promise<Response> {
     try {
-      const brand = await this.brandService.getById(id, [], ['category']);
-      if (!brand) {
+      const brandResponse = await this.brandService.getById(
+        id,
+        [],
+        ['category'],
+      );
+      if (!brandResponse) {
         return hasError(
           res,
           HttpStatus.NOT_FOUND,
@@ -79,16 +83,18 @@ export class BrandController {
       }
 
       const enhancedBrand = {
-        ...brand,
+        ...brandResponse.brand,
         onChain: {
-          fid: brand.onChainFid,
-          walletAddress: brand.walletAddress,
-          totalBrndAwarded: brand.totalBrndAwarded,
-          availableBrnd: brand.availableBrnd,
-          handle: brand.onChainHandle,
-          metadataHash: brand.metadataHash,
-          createdAt: brand.onChainCreatedAt?.getTime() || null,
+          fid: brandResponse.brand.onChainFid,
+          walletAddress: brandResponse.brand.walletAddress,
+          totalBrndAwarded: brandResponse.brand.totalBrndAwarded,
+          availableBrnd: brandResponse.brand.availableBrnd,
+          handle: brandResponse.brand.onChainHandle,
+          metadataHash: brandResponse.brand.metadataHash,
+          createdAt: brandResponse.brand.onChainCreatedAt?.getTime() || null,
         },
+        casts: brandResponse.casts,
+        fanCount: brandResponse.fanCount,
       };
 
       return hasResponse(res, enhancedBrand);
@@ -132,8 +138,8 @@ export class BrandController {
       }
 
       // Get brand information
-      const brand = await this.brandService.getById(brandId);
-      if (!brand) {
+      const brandResponse = await this.brandService.getById(brandId);
+      if (!brandResponse) {
         return hasError(
           res,
           HttpStatus.NOT_FOUND,
@@ -141,6 +147,8 @@ export class BrandController {
           'Brand not found',
         );
       }
+
+      const brand = brandResponse.brand;
 
       // Check if requester has permission (brand owner FID or wallet address)
       const hasPermission =

@@ -16,7 +16,7 @@ import { Brand } from '../../../models';
 import { getConfig } from '../../../security/config';
 import { logger } from '../../../main';
 
-// Contract ABI for StoriesInMotionV5
+// Contract ABI for BRNDSEASON1
 const CONTRACT_ABI = [
   {
     inputs: [
@@ -875,10 +875,8 @@ export class ContractUploadService {
         throw new Error('ADMIN_PRIVATE_KEY environment variable not set');
       }
 
-      if (!process.env.STORIES_IN_MOTION_V5_ADDRESS) {
-        throw new Error(
-          'STORIES_IN_MOTION_V5_ADDRESS environment variable not set',
-        );
+      if (!process.env.BRND_SEASON_1_ADDRESS) {
+        throw new Error('BRND_SEASON_1_ADDRESS environment variable not set');
       }
 
       const privateKey = process.env.ADMIN_PRIVATE_KEY.startsWith('0x')
@@ -899,7 +897,7 @@ export class ContractUploadService {
       });
 
       const contractAddress = process.env
-        .STORIES_IN_MOTION_V5_ADDRESS as `0x${string}`;
+        .BRND_SEASON_1_ADDRESS as `0x${string}`;
 
       // Reset upload flags for fresh contract deployment
       if (resetFlags) {
@@ -1031,10 +1029,8 @@ export class ContractUploadService {
     try {
       const config = getConfig();
 
-      if (!process.env.STORIES_IN_MOTION_V5_ADDRESS) {
-        throw new Error(
-          'STORIES_IN_MOTION_V5_ADDRESS environment variable not set',
-        );
+      if (!process.env.BRND_SEASON_1_ADDRESS) {
+        throw new Error('BRND_SEASON_1_ADDRESS environment variable not set');
       }
 
       const publicClient = createPublicClient({
@@ -1043,7 +1039,7 @@ export class ContractUploadService {
       });
 
       const contractAddress = process.env
-        .STORIES_IN_MOTION_V5_ADDRESS as `0x${string}`;
+        .BRND_SEASON_1_ADDRESS as `0x${string}`;
 
       // Since _brandIdCounter is private in V5, we'll count by checking existing brands
       // Try to get brands starting from ID 1 until we hit an error (brand doesn't exist)

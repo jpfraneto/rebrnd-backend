@@ -10,7 +10,6 @@ import {
   OneToMany,
 } from 'typeorm';
 
-import { Brand } from '../Brand';
 
 /**
  * @class Brand
@@ -24,8 +23,8 @@ export class Category {
   @Column()
   name: string;
 
-  @OneToMany(() => Brand, (brand) => brand.category)
-  brands: Brand[];
+  @OneToMany('Brand', 'category')
+  brands: any[];
 
   @CreateDateColumn()
   createdAt: Date;

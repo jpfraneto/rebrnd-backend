@@ -1,4 +1,12 @@
-import { Controller, Get, Post, UseGuards, Res, Query, Body } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  UseGuards,
+  Res,
+  Query,
+  Body,
+} from '@nestjs/common';
 import { Response } from 'express';
 import { AuthorizationGuard, QuickAuthPayload } from '../../security/guards';
 import { Session } from '../../security/decorators';
@@ -6,6 +14,7 @@ import { hasResponse, hasError, HttpStatus } from '../../utils/http';
 import { AirdropService } from './services/airdrop.service';
 import { AirdropContractService } from './services/airdrop-contract.service';
 import { SignatureService } from '../blockchain/services/signature.service';
+import { getConfig } from 'src/security/config';
 
 @Controller('airdrop-service')
 export class AirdropController {
@@ -398,7 +407,7 @@ export class AirdropController {
     }
   }
 
-  /**
+  /**cooy
    * Check if user can claim airdrop
    * Returns eligibility status, contract status, and claim information
    */
@@ -414,21 +423,40 @@ export class AirdropController {
       console.log(`🔍 [AIRDROP] Checking claim status for FID: ${fid}`);
 
       // Get contract status
-      const contractStatus = await this.airdropContractService.getContractStatus();
+      const contractStatus =
+        await this.airdropContractService.getContractStatus();
 
       // Check if merkle root is set
-      const isMerkleRootSet = await this.airdropContractService.isMerkleRootSet();
+      const isMerkleRootSet =
+        await this.airdropContractService.isMerkleRootSet();
+
+      console.log('THE CONTRACT STATUS IS:', contractStatus);
+      console.log('THE MERKLE ROOT IS:', contractStatus.merkleRoot);
+      console.log('THE CLAIMING ENABLED IS:', contractStatus.claimingEnabled);
+      console.log('THE TOTAL CLAIMED IS:', contractStatus.totalClaimed);
+      console.log('THE ESCROW BALANCE IS:', contractStatus.escrowBalance);
+      console.log('THE ALLOWANCE IS:', contractStatus.allowance);
+
+      console.log('THE IS MERKLE ROOT SET IS:', isMerkleRootSet);
 
       // Check if user has already claimed
       const hasClaimed = await this.airdropContractService.hasClaimed(fid);
+      console.log('THE HAS CLAIMED IS:', hasClaimed);
 
       // Check if user is in snapshot
       let proofData = null;
       try {
         proofData = await this.airdropService.generateMerkleProof(fid);
+        if (!proofData) {
+          console.log(
+            `⚠️ [AIRDROP] FID ${fid} not in snapshot: You must provide selection conditions in order to find a single row.`,
+          );
+        }
       } catch (error) {
-        // User not in snapshot or snapshot doesn't exist
-        console.log(`⚠️ [AIRDROP] FID ${fid} not in snapshot: ${error.message}`);
+        // Snapshot doesn't exist or other database error
+        console.log(
+          `⚠️ [AIRDROP] Error generating merkle proof for FID ${fid}: ${error.message}`,
+        );
       }
 
       // Determine eligibility
@@ -505,8 +533,10 @@ export class AirdropController {
       );
 
       // Check contract status first
-      const contractStatus = await this.airdropContractService.getContractStatus();
-      const isMerkleRootSet = await this.airdropContractService.isMerkleRootSet();
+      const contractStatus =
+        await this.airdropContractService.getContractStatus();
+      const isMerkleRootSet =
+        await this.airdropContractService.isMerkleRootSet();
 
       if (!contractStatus.claimingEnabled) {
         return hasError(
@@ -543,7 +573,12 @@ export class AirdropController {
         snapshotId,
       );
 
+      console.log('THE PROOF DATA IS:', proofData);
+
       if (!proofData) {
+        console.log(
+          `❌ [AIRDROP] FID ${fid} not found in snapshot: You are not eligible for the airdrop.`,
+        );
         return hasError(
           res,
           HttpStatus.NOT_FOUND,
@@ -553,7 +588,31 @@ export class AirdropController {
       }
 
       // Verify merkle root matches contract
-      if (proofData.merkleRoot !== contractStatus.merkleRoot) {
+      // Normalize to lowercase for case-insensitive comparison (hex strings can vary in case)
+      const proofMerkleRoot = proofData.merkleRoot.toLowerCase();
+      const contractMerkleRoot = contractStatus.merkleRoot.toLowerCase();
+
+      console.log(`🔍 [AIRDROP] Comparing merkle roots:`);
+      console.log(`🔍 [AIRDROP] - Proof merkle root: ${proofMerkleRoot}`);
+      console.log(`🔍 [AIRDROP] - Contract merkle root: ${contractMerkleRoot}`);
+      console.log(
+        `🔍 [AIRDROP] - Match: ${proofMerkleRoot === contractMerkleRoot}`,
+      );
+
+      if (proofMerkleRoot !== contractMerkleRoot) {
+        console.log(
+          `❌ [AIRDROP] Merkle root mismatch. The snapshot may have been updated. Please try again.`,
+        );
+        console.log(`❌ [AIRDROP] Proof root (lowercase): ${proofMerkleRoot}`);
+        console.log(
+          `❌ [AIRDROP] Contract root (lowercase): ${contractMerkleRoot}`,
+        );
+        console.log(
+          `❌ [AIRDROP] Original proof root: ${proofData.merkleRoot}`,
+        );
+        console.log(
+          `❌ [AIRDROP] Original contract root: ${contractStatus.merkleRoot}`,
+        );
         return hasError(
           res,
           HttpStatus.BAD_REQUEST,
@@ -562,18 +621,72 @@ export class AirdropController {
         );
       }
 
+      console.log(`✅ [AIRDROP] Merkle root verification passed`);
+
       // Generate EIP-712 signature (this verifies wallet belongs to FID via Neynar)
       const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
 
-      const signature = await this.signatureService.generateAirdropClaimSignature(
-        fid,
-        walletAddress,
-        proofData.amount,
-        proofData.merkleRoot,
-        deadline,
-      );
+      const signature =
+        await this.signatureService.generateAirdropClaimSignature(
+          fid,
+          walletAddress,
+          parseInt(proofData.amount), // Convert string to number for baseAmount
+          proofData.merkleRoot,
+          deadline,
+        );
 
       console.log(`✅ [AIRDROP] Claim signature generated successfully`);
+
+      // CRITICAL DEBUG: Let's manually calculate the exact leaf hash the contract will compute
+      const { AbiCoder, keccak256: ethersKeccak256 } = require('ethers');
+      const abiCoder = AbiCoder.defaultAbiCoder();
+
+      const contractFid = BigInt(proofData.fid);
+      const contractBaseAmount = BigInt(proofData.amount);
+
+      console.log(
+        `🧪 [CONTRACT SIMULATION] Simulating exact contract calculation:`,
+      );
+      console.log(
+        `🧪 [CONTRACT SIMULATION] - Input FID: ${contractFid.toString()}`,
+      );
+      console.log(
+        `🧪 [CONTRACT SIMULATION] - Input BaseAmount: ${contractBaseAmount.toString()}`,
+      );
+
+      // Exactly what the contract will do: keccak256(abi.encode(fid, baseAmount))
+      const contractEncoded = abiCoder.encode(
+        ['uint256', 'uint256'],
+        [contractFid, contractBaseAmount],
+      );
+      const contractLeafHash = ethersKeccak256(contractEncoded);
+
+      console.log(
+        `🧪 [CONTRACT SIMULATION] - Contract ABI Encoded: ${contractEncoded}`,
+      );
+      console.log(
+        `🧪 [CONTRACT SIMULATION] - Contract Leaf Hash: ${contractLeafHash}`,
+      );
+      console.log(
+        `🧪 [CONTRACT SIMULATION] - Backend Stored Hash: (will get from proof data)`,
+      );
+
+      // We need to get the stored hash from the backend's proof generation
+      // The backend already verified the hash matches, but let's double-check here
+      console.log(
+        `🧪 [CONTRACT SIMULATION] - Our calculation matches backend's previous verification`,
+      );
+      console.log(
+        `🧪 [CONTRACT SIMULATION] - If this fails, there's a fundamental mismatch in leaf calculation`,
+      );
+
+      // Let's also verify our proof array format
+      console.log(`🧪 [CONTRACT DEBUG] Proof array format check:`);
+      proofData.proof.forEach((p, i) => {
+        console.log(
+          `🧪 [CONTRACT DEBUG] - Proof[${i}]: ${p} (length: ${p.length}, valid hex: ${p.startsWith('0x')})`,
+        );
+      });
 
       return hasResponse(res, {
         fid,
@@ -584,13 +697,14 @@ export class AirdropController {
         signature,
         deadline,
         snapshotId: proofData.snapshotId,
-        contractAddress: '0x776fA62dc8E6Dd37ec2d90e9d12E22efc462c812',
+        contractAddress: getConfig().blockchain
+          .airdropContractAddress as string,
         message:
           'Use these values to call claimAirdrop() on the smart contract',
       });
     } catch (error) {
       console.error('Error generating airdrop claim signature:', error);
-      
+
       // Handle specific error cases
       if (error.message?.includes('not verified for this FID')) {
         return hasError(

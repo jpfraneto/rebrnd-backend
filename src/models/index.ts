@@ -7,4 +7,5 @@ export * from './Category';
 export * from './UserDailyActions';
 export * from './AirdropScore';
 export * from './AirdropSnapshot';
+export * from './AirdropLeaf';
 export * from './RewardClaim';

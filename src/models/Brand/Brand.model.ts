@@ -12,9 +12,6 @@ import {
   Unique,
 } from 'typeorm';
 
-import { UserBrandVotes } from '../UserBrandVotes';
-import { BrandTags } from '../BrandTags';
-import { Category } from '../Category';
 
 /**
  * @class Brand
@@ -38,8 +35,8 @@ export class Brand {
   @Column({ length: 4096 })
   description: string;
 
-  @ManyToOne(() => Category, (category) => category.brands)
-  category: Category;
+  @ManyToOne('Category', 'brands')
+  category: any;
 
   @Column()
   followerCount: number;
@@ -144,15 +141,15 @@ export class Brand {
   @Column({ default: false })
   isUploadedToContract: boolean;
 
-  @OneToMany(() => UserBrandVotes, (userBrandVotes) => userBrandVotes.brand1)
-  userBrandVotes1: UserBrandVotes[];
+  @OneToMany('UserBrandVotes', 'brand1')
+  userBrandVotes1: any[];
 
-  @OneToMany(() => UserBrandVotes, (userBrandVotes) => userBrandVotes.brand2)
-  userBrandVotes2: UserBrandVotes[];
+  @OneToMany('UserBrandVotes', 'brand2')
+  userBrandVotes2: any[];
 
-  @OneToMany(() => UserBrandVotes, (userBrandVotes) => userBrandVotes.brand3)
-  userBrandVotes3: UserBrandVotes[];
+  @OneToMany('UserBrandVotes', 'brand3')
+  userBrandVotes3: any[];
 
-  @OneToMany(() => BrandTags, (brandTags) => brandTags.brand)
-  brandTags: BrandTags[];
+  @OneToMany('BrandTags', 'brand')
+  brandTags: any[];
 }

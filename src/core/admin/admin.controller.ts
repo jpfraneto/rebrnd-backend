@@ -16,11 +16,20 @@ import { Response } from 'express';
 import { AdminService } from './services/admin.service';
 import { ContractUploadService } from '../blockchain/services/contract-upload.service';
 import { AirdropService } from '../airdrop/services/airdrop.service';
-import { CreateBrandDto, UpdateBrandDto, PrepareMetadataDto, BlockchainBrandDto } from './dto';
+import {
+  CreateBrandDto,
+  UpdateBrandDto,
+  PrepareMetadataDto,
+  BlockchainBrandDto,
+} from './dto';
 import { AuthorizationGuard, QuickAuthPayload } from '../../security/guards';
 import { Session } from '../../security/decorators';
 import { HttpStatus, hasError, hasResponse } from '../../utils';
 import { logger } from '../../main';
+import { createWalletClient, http, parseAbi } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { base } from 'viem/chains';
+import { getConfig } from '../../security/config';
 
 const adminFids = [5431, 16098];
 
@@ -875,7 +884,7 @@ export class AdminController {
 
   /**
    * Generate airdrop snapshot (merkle tree) for top 1111 users
-   * Creates a merkle root that can be deployed to the airdrop smart contract
+   * Creates a merkle root and deploys it to the airdrop smart contract
    */
   @Get('airdrop-snapshot')
   @UseGuards(AuthorizationGuard)
@@ -883,9 +892,7 @@ export class AdminController {
     @Session() user: QuickAuthPayload,
     @Res() res: Response,
   ) {
-    console.log(
-      `generateAirdropSnapshot called - user: ${user.sub}`,
-    );
+    console.log(`generateAirdropSnapshot called - user: ${user.sub}`);
 
     if (!adminFids.includes(user.sub)) {
       console.log(`Access denied for user ${user.sub} - not in admin list`);
@@ -898,20 +905,47 @@ export class AdminController {
     }
 
     try {
-      console.log('🌳 Generating airdrop snapshot...');
+      console.log('🌳 [ADMIN] Starting airdrop snapshot generation...');
+      console.log(`👤 [ADMIN] Triggered by admin FID: ${user.sub}`);
+
       const snapshot = await this.airdropService.generateAirdropSnapshot();
-      console.log('✅ Airdrop snapshot generated successfully:', snapshot);
+      console.log('✅ [ADMIN] Airdrop snapshot generated successfully!');
+      console.log(`📊 [ADMIN] Snapshot summary:`, {
+        snapshotId: snapshot.snapshotId,
+        merkleRoot: snapshot.merkleRoot,
+        totalUsers: snapshot.totalUsers,
+        totalTokensFormatted: `${snapshot.totalTokensFormatted} tokens`,
+        totalTokensWei: `${snapshot.totalTokens} wei`,
+        migratedUsers: snapshot.migratedUsers,
+      });
+
+      // Set merkle root on the smart contract
+      console.log(`🔗 [ADMIN] Now updating smart contract with merkle root...`);
+      const contractResult = await this.updateContractMerkleRoot(
+        snapshot.merkleRoot,
+        snapshot.snapshotId,
+      );
+      console.log(`🔗 [ADMIN] Contract update result:`, contractResult);
+
+      const contractClaimingEnabled = await this.setClaimingEnabled();
+
+      console.log(
+        `🔗 [ADMIN] Contract claiming enabled:`,
+        contractClaimingEnabled,
+      );
 
       return hasResponse(res, {
         success: true,
-        message: `Airdrop snapshot generated for ${snapshot.totalUsers} users`,
+        message: `Airdrop snapshot generated for ${snapshot.totalUsers} users and merkle root updated on contract`,
         snapshot: {
           snapshotId: snapshot.snapshotId,
           merkleRoot: snapshot.merkleRoot,
           totalUsers: snapshot.totalUsers,
           totalTokens: snapshot.totalTokens,
-          note: 'Use this merkleRoot to deploy the airdrop smart contract. Users can claim using their FID and merkle proof.',
+          totalTokensFormatted: snapshot.totalTokensFormatted,
+          migratedUsers: snapshot.migratedUsers,
         },
+        contract: contractResult,
       });
     } catch (error) {
       console.error('Error generating airdrop snapshot:', error);
@@ -921,6 +955,232 @@ export class AdminController {
         'generateAirdropSnapshot',
         error.message,
       );
+    }
+  }
+
+  /**
+   * Updates the merkle root on the airdrop smart contract
+   * Called automatically when generating snapshots
+   */
+  private async updateContractMerkleRoot(
+    merkleRoot: string,
+    snapshotId: number,
+  ): Promise<{
+    success: boolean;
+    transactionHash?: string;
+    error?: string;
+  }> {
+    try {
+      console.log(`🔗 [CONTRACT] ==========================================`);
+      console.log(`🔗 [CONTRACT] UPDATING MERKLE ROOT ON SMART CONTRACT`);
+      console.log(`🔗 [CONTRACT] ==========================================`);
+      console.log(`🔑 [CONTRACT] New merkle root: ${merkleRoot}`);
+      console.log(`📄 [CONTRACT] Snapshot ID: ${snapshotId}`);
+
+      const config = getConfig();
+      const AIRDROP_CONTRACT_ADDRESS = config.blockchain.airdropContractAddress;
+
+      console.log(
+        `🏠 [CONTRACT] Contract address: ${AIRDROP_CONTRACT_ADDRESS}`,
+      );
+
+      // Create wallet client with admin private key
+      const account = privateKeyToAccount(
+        config.blockchain.backendPrivateKey as `0x${string}`,
+      );
+      const walletClient = createWalletClient({
+        account,
+        chain: base,
+        transport: http(config.blockchain.baseRpcUrl),
+      });
+
+      console.log(`👤 [CONTRACT] Admin account: ${account.address}`);
+      console.log(`⛓️ [CONTRACT] Chain ID: ${base.id} (Base)`);
+
+      // ABI for updateMerkleRoot function
+      const airdropAbi = parseAbi([
+        'function updateMerkleRoot(bytes32 newRoot) external',
+        'function merkleRoot() external view returns (bytes32)',
+        'function owner() external view returns (address)',
+      ]);
+
+      console.log(
+        `📋 [CONTRACT] ABI loaded with functions:`,
+        airdropAbi.map((f) => f.name),
+      );
+
+      // Call updateMerkleRoot on the contract
+      console.log(`📞 [CONTRACT] Preparing contract call...`);
+      console.log(`📞 [CONTRACT] Function: updateMerkleRoot`);
+      console.log(`📞 [CONTRACT] Args: [${merkleRoot}]`);
+
+      const txHash = await walletClient.writeContract({
+        account,
+        address: AIRDROP_CONTRACT_ADDRESS as `0x${string}`,
+        abi: airdropAbi,
+        functionName: 'updateMerkleRoot',
+        args: [merkleRoot as `0x${string}`],
+        chain: base,
+      });
+
+      console.log(`✅ [CONTRACT] ==========================================`);
+      console.log(`✅ [CONTRACT] MERKLE ROOT UPDATED SUCCESSFULLY!`);
+      console.log(`✅ [CONTRACT] ==========================================`);
+      console.log(`🧾 [CONTRACT] Transaction hash: ${txHash}`);
+      console.log(
+        `🔗 [CONTRACT] View on BaseScan: https://basescan.org/tx/${txHash}`,
+      );
+
+      // Update snapshot with deployment info
+      console.log(`💾 [DATABASE] Updating snapshot with deployment info...`);
+      await this.airdropService.airdropSnapshotRepository.update(
+        { id: snapshotId },
+        {
+          contractAddress: AIRDROP_CONTRACT_ADDRESS,
+          deployedAt: new Date(),
+        },
+      );
+
+      console.log(
+        `💾 [DATABASE] ✅ Updated snapshot ${snapshotId} with contract deployment info`,
+      );
+      console.log(`🎉 [CONTRACT] AIRDROP SNAPSHOT DEPLOYMENT COMPLETE!`);
+
+      return {
+        success: true,
+        transactionHash: txHash,
+      };
+    } catch (error) {
+      console.error(`❌ [CONTRACT] ==========================================`);
+      console.error(`❌ [CONTRACT] ERROR UPDATING MERKLE ROOT`);
+      console.error(`❌ [CONTRACT] ==========================================`);
+      console.error(`❌ [CONTRACT] Error details:`, error);
+      console.error(`❌ [CONTRACT] Error message:`, error.message);
+      console.error(`❌ [CONTRACT] Error stack:`, error.stack);
+
+      if (error.cause) {
+        console.error(`❌ [CONTRACT] Error cause:`, error.cause);
+      }
+
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Updates the claiming enabled status on the airdrop smart contract
+   * Called automatically when generating snapshots
+   */
+  private async updateContractClaimingEnabled(enabled: boolean): Promise<{
+    success: boolean;
+    transactionHash?: string;
+    error?: string;
+  }> {
+    try {
+      console.log(`🔗 [CONTRACT] ==========================================`);
+      console.log(`🔗 [CONTRACT] UPDATING CLAIMING ENABLED ON SMART CONTRACT`);
+      console.log(`🔗 [CONTRACT] ==========================================`);
+      console.log(`🔘 [CONTRACT] Claiming enabled: ${enabled}`);
+
+      const config = getConfig();
+      const AIRDROP_CONTRACT_ADDRESS = config.blockchain.airdropContractAddress;
+
+      console.log(
+        `🏠 [CONTRACT] Contract address: ${AIRDROP_CONTRACT_ADDRESS}`,
+      );
+
+      // Create wallet client with admin private key
+      const account = privateKeyToAccount(
+        config.blockchain.backendPrivateKey as `0x${string}`,
+      );
+      const walletClient = createWalletClient({
+        account,
+        chain: base,
+        transport: http(config.blockchain.baseRpcUrl),
+      });
+
+      console.log(`👤 [CONTRACT] Admin account: ${account.address}`);
+      console.log(`⛓️ [CONTRACT] Chain ID: ${base.id} (Base)`);
+
+      // ABI for setClaimingEnabled function
+      const airdropAbi = parseAbi([
+        'function setClaimingEnabled(bool enabled) external',
+        'function claimingEnabled() external view returns (bool)',
+        'function owner() external view returns (address)',
+      ]);
+
+      console.log(
+        `📋 [CONTRACT] ABI loaded with functions:`,
+        airdropAbi.map((f) => f.name),
+      );
+
+      // Call setClaimingEnabled on the contract
+      console.log(`📞 [CONTRACT] Preparing contract call...`);
+      console.log(`📞 [CONTRACT] Function: setClaimingEnabled`);
+      console.log(`📞 [CONTRACT] Args: [${enabled}]`);
+
+      const txHash = await walletClient.writeContract({
+        account,
+        address: AIRDROP_CONTRACT_ADDRESS as `0x${string}`,
+        abi: airdropAbi,
+        functionName: 'setClaimingEnabled',
+        args: [enabled],
+        chain: base,
+      });
+
+      console.log(`✅ [CONTRACT] ==========================================`);
+      console.log(`✅ [CONTRACT] CLAIMING ENABLED UPDATED SUCCESSFULLY!`);
+      console.log(`✅ [CONTRACT] ==========================================`);
+      console.log(`🧾 [CONTRACT] Transaction hash: ${txHash}`);
+      console.log(
+        `🔗 [CONTRACT] View on BaseScan: https://basescan.org/tx/${txHash}`,
+      );
+      console.log(`🎉 [CONTRACT] CLAIMING STATUS UPDATE COMPLETE!`);
+
+      return {
+        success: true,
+        transactionHash: txHash,
+      };
+    } catch (error) {
+      console.error(`❌ [CONTRACT] ==========================================`);
+      console.error(`❌ [CONTRACT] ERROR UPDATING CLAIMING ENABLED`);
+      console.error(`❌ [CONTRACT] ==========================================`);
+      console.error(`❌ [CONTRACT] Error details:`, error);
+      console.error(`❌ [CONTRACT] Error message:`, error.message);
+      console.error(`❌ [CONTRACT] Error stack:`, error.stack);
+
+      if (error.cause) {
+        console.error(`❌ [CONTRACT] Error cause:`, error.cause);
+      }
+
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  private async setClaimingEnabled(): Promise<{
+    success: boolean;
+    transactionHash?: string;
+    error?: string;
+  }> {
+    try {
+      console.log(`🔗 [ADMIN] Setting claiming enabled on contract...`);
+      const contractResult = await this.updateContractClaimingEnabled(true);
+      console.log(
+        `🔗 [ADMIN] Contract claiming enabled result:`,
+        contractResult,
+      );
+      return contractResult;
+    } catch (error) {
+      console.error('Error setting claiming enabled:', error);
+      return {
+        success: false,
+        error: error.message,
+      };
     }
   }
 }

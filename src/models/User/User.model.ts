@@ -11,11 +11,10 @@ import {
   ManyToOne,
 } from 'typeorm';
 
-import { UserBrandVotes } from '../UserBrandVotes';
-import { Brand } from '../Brand';
 
 // Types
-import { UserRoleEnum } from './';
+import { UserRoleEnum } from './User.types';
+import type { Brand } from '../Brand/Brand.model';
 
 /**
  * @class User
@@ -46,7 +45,11 @@ export class User {
   })
   points: number;
 
-  @Column()
+  @Column({
+    type: 'enum',
+    enum: UserRoleEnum,
+    default: UserRoleEnum.USER,
+  })
   role: UserRoleEnum;
 
 
@@ -111,10 +114,10 @@ export class User {
   })
   verified: boolean;
 
-  @ManyToOne(() => Brand, {
+  @ManyToOne('Brand', {
     nullable: true,
   })
-  favoriteBrand: Brand;
+  favoriteBrand: Brand | null;
 
   @CreateDateColumn()
   createdAt: Date;
@@ -122,7 +125,7 @@ export class User {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  @OneToMany(() => UserBrandVotes, (userBrandVotes) => userBrandVotes.user)
-  userBrandVotes: UserBrandVotes[];
+  @OneToMany('UserBrandVotes', 'user')
+  userBrandVotes: any[];
 
 }

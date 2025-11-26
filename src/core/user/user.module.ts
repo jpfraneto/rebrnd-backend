@@ -2,6 +2,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
+import { AirdropModule } from '../airdrop/airdrop.module';
 
 // Controllers
 import { UserController } from './user.controller';
@@ -15,6 +16,7 @@ import { Brand, User, UserBrandVotes, UserDailyActions, AirdropSnapshot, Airdrop
   imports: [
     TypeOrmModule.forFeature([User, Brand, UserBrandVotes, UserDailyActions, AirdropSnapshot, AirdropScore]),
     AuthModule,
+    AirdropModule,
   ],
   controllers: [UserController],
   providers: [UserService],

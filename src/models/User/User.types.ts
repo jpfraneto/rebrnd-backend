@@ -1,6 +1,3 @@
-import { Brand } from '../Brand';
-import { User } from './';
-
 export enum UserRoleEnum {
   USER = 'user',
   ADMIN = 'admin',
@@ -10,15 +7,15 @@ export enum UserRoleEnum {
  * Interface for Current User
  */
 export interface CurrentUser {
-  id: User['id'];
-  userName: User['username'];
-  fid: User['fid'];
+  id: string;
+  userName: string;
+  fid: number;
   role: UserRoleEnum;
   token: string;
 }
 
 export interface UserBrandRanking {
-  brand: Brand;
+  brand: any;
   points: number; // Total points this user gave this brand
   voteCount: number; // How many times user voted for this brand
   lastVoted: Date; // When they last voted for this brand

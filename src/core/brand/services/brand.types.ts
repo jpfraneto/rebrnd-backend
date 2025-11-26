@@ -8,9 +8,12 @@ export type BrandCast = {
   creatorPowerBadge: boolean;
   text: string;
   image?: string;
+  warpcastUrl: string;
+  hash: string;
 };
 
-export type BrandResponse = Brand & {
-  fanCount?: number;
-  casts?: BrandCast[];
+export type BrandResponse = {
+  brand: Brand;
+  casts: BrandCast[];
+  fanCount: number;
 };

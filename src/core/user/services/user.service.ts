@@ -1,5 +1,5 @@
 // Dependencies
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository, In, MoreThan } from 'typeorm';
 
@@ -15,6 +15,7 @@ import {
   AirdropScore,
 } from '../../../models';
 import { logger } from 'src/main';
+import { AirdropContractService } from '../../airdrop/services/airdrop-contract.service';
 
 /**
  * Interface for leaderboard response with user position info
@@ -70,6 +71,9 @@ export class UserService {
 
     @InjectRepository(AirdropScore)
     private readonly airdropScoreRepository: Repository<AirdropScore>,
+
+    @Optional()
+    private readonly airdropContractService?: AirdropContractService,
   ) {}
 
   /**
@@ -987,7 +991,7 @@ export class UserService {
         dailyStreak,
         totalPodiums,
         votedBrandsCount,
-        favoriteBrand,
+        favoriteBrand: favoriteBrand ? { id: favoriteBrand.id } : null,
         maxDailyStreak: newMaxStreak,
       });
 
@@ -1117,8 +1121,10 @@ export class UserService {
     airdropScore?: number;
     tokenAllocation?: number;
     percentage?: number;
+    multipliers?: number;
     leaderboardPosition?: number;
     snapshotExists: boolean;
+    hasClaimed: boolean;
     latestSnapshot?: {
       id: number;
       merkleRoot: string;
@@ -1134,18 +1140,40 @@ export class UserService {
       });
 
       // Get latest snapshot info
-      const latestSnapshot = await this.airdropSnapshotRepository.findOne({
+      const snapshotResults = await this.airdropSnapshotRepository.find({
         order: { createdAt: 'DESC' },
-        select: ['id', 'merkleRoot', 'totalUsers', 'totalTokens', 'snapshotDate'],
+        select: [
+          'id',
+          'merkleRoot',
+          'totalUsers',
+          'totalTokens',
+          'snapshotDate',
+        ],
+        take: 1,
       });
+      const latestSnapshot =
+        snapshotResults.length > 0 ? snapshotResults[0] : null;
+
+      // Check if user has claimed on the smart contract
+      let hasClaimed = false;
+      try {
+        if (this.airdropContractService) {
+          hasClaimed = await this.airdropContractService.hasClaimed(fid);
+        }
+      } catch (error) {
+        logger.error(`Error checking claim status for FID ${fid}:`, error);
+        // If contract call fails, default to false but log the error
+      }
 
       const response: {
         isEligible: boolean;
+        hasClaimed: boolean;
         airdropScore?: number;
         tokenAllocation?: number;
         percentage?: number;
         leaderboardPosition?: number;
         snapshotExists: boolean;
+        multipliers?: number;
         latestSnapshot?: {
           id: number;
           merkleRoot: string;
@@ -1155,21 +1183,25 @@ export class UserService {
         };
       } = {
         isEligible: !!airdropScore,
+        hasClaimed,
         snapshotExists: !!latestSnapshot,
-        latestSnapshot: latestSnapshot ? {
-          id: latestSnapshot.id,
-          merkleRoot: latestSnapshot.merkleRoot,
-          totalUsers: latestSnapshot.totalUsers,
-          totalTokens: latestSnapshot.totalTokens,
-          snapshotDate: latestSnapshot.snapshotDate,
-        } : undefined,
+        multipliers: airdropScore?.totalMultiplier,
+        latestSnapshot: latestSnapshot
+          ? {
+              id: latestSnapshot.id,
+              merkleRoot: latestSnapshot.merkleRoot,
+              totalUsers: latestSnapshot.totalUsers,
+              totalTokens: latestSnapshot.totalTokens,
+              snapshotDate: latestSnapshot.snapshotDate,
+            }
+          : undefined,
       };
 
       if (airdropScore) {
         response.airdropScore = Number(airdropScore.finalScore);
         response.tokenAllocation = Number(airdropScore.tokenAllocation);
         response.percentage = Number(airdropScore.percentage);
-        
+
         // Get leaderboard position (rank among all eligible users)
         const higherScores = await this.airdropScoreRepository.count({
           where: {
@@ -1182,8 +1214,21 @@ export class UserService {
       return response;
     } catch (error) {
       logger.error('Error getting user airdrop info:', error);
+      // Try to get claim status even if other checks fail
+      let hasClaimed = false;
+      try {
+        if (this.airdropContractService) {
+          hasClaimed = await this.airdropContractService.hasClaimed(fid);
+        }
+      } catch (claimError) {
+        logger.error(
+          `Error checking claim status for FID ${fid} in error handler:`,
+          claimError,
+        );
+      }
       return {
         isEligible: false,
+        hasClaimed,
         snapshotExists: false,
       };
     }
@@ -1249,11 +1294,12 @@ export class UserService {
       }
 
       // Get today's vote status, contextual transaction data, and airdrop info
-      const [todaysVoteStatus, contextualTransaction, airdropInfo] = await Promise.all([
-        this.getTodaysVoteStatus(fid),
-        this.getContextualTransactionData(fid),
-        this.getUserAirdropInfo(fid),
-      ]);
+      const [todaysVoteStatus, contextualTransaction, airdropInfo] =
+        await Promise.all([
+          this.getTodaysVoteStatus(fid),
+          this.getContextualTransactionData(fid),
+          this.getUserAirdropInfo(fid),
+        ]);
 
       // Calculate precise boolean flags
       const votedToday = todaysVoteStatus?.hasVoted || false;
