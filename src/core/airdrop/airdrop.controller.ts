@@ -379,7 +379,7 @@ export class AirdropController {
     @Query('batchSize') batchSize?: string,
   ) {
     try {
-      const batchSizeNum = batchSize ? parseInt(batchSize, 10) : 10;
+      const batchSizeNum = batchSize ? parseInt(batchSize, 10) : 50;
       const maxBatchSize = 50;
       const actualBatchSize = Math.min(batchSizeNum, maxBatchSize);
 
