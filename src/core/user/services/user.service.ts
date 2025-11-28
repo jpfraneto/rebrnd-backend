@@ -419,7 +419,7 @@ export class UserService {
         acc[dateKey] = {};
       }
       acc[dateKey] = {
-        id: vote.id,
+        transactionHash: vote.transactionHash,
         date: vote.date,
         brand1: {
           id: vote.brand1.id,
@@ -728,7 +728,7 @@ export class UserService {
         hasVoted,
         hasShared,
         hasClaimed,
-        voteId: vote.id,
+        voteId: vote.transactionHash,
         castHash: vote.castHash,
         transactionHash: vote.transactionHash,
         day: vote.day,

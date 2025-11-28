@@ -305,7 +305,7 @@ export class BrandController {
       const votes = await this.brandService.voteForBrands(user.sub, ids);
 
       return hasResponse(res, {
-        id: votes.id,
+        transactionHash: votes.transactionHash,
         date: votes.date,
         brand1: {
           id: votes.brand1.id,
@@ -538,7 +538,7 @@ export class BrandController {
         }
 
         // All verifications passed - update vote and award points
-        await this.brandService.markVoteAsShared(vote.id, castHash);
+        await this.brandService.markVoteAsShared(vote.transactionHash, castHash);
         const updatedUser = await this.userService.addPoints(dbUser.id, 3);
 
         // Calculate day from vote date (using same calculation as contract: block.timestamp / 86400)
@@ -696,14 +696,8 @@ export class BrandController {
         );
       }
 
-      // Get the vote by voteId (could be UUID) or transactionHash
-      // Try transaction hash first (more reliable)
-      let vote = await this.brandService.getVoteByTransactionHash(voteId);
-
-      // If not found by transaction hash, try by vote ID (UUID)
-      if (!vote) {
-        vote = await this.brandService.getVoteById(voteId);
-      }
+      // Get the vote by transactionHash (primary key)
+      const vote = await this.brandService.getVoteByTransactionHash(voteId);
 
       if (!vote) {
         return hasError(
@@ -1149,7 +1143,7 @@ export class BrandController {
 
       // Format the response to match frontend expectations
       const formattedPodiums = podiums.map((vote) => ({
-        id: vote.id,
+        transactionHash: vote.transactionHash,
         date: vote.date,
         createdAt: vote.date,
         user: {

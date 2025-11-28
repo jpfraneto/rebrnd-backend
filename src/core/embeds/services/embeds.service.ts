@@ -31,7 +31,7 @@ export class EmbedsService {
     try {
       // Get the vote with all related data
       const vote = await this.votesRepository.findOne({
-        where: { id: voteId },
+        where: { transactionHash: voteId },
         relations: ['user', 'brand1', 'brand2', 'brand3'],
       });
 
@@ -61,7 +61,7 @@ export class EmbedsService {
     try {
       // Get the vote with all related data
       const vote = await this.votesRepository.findOne({
-        where: { id: voteId },
+        where: { transactionHash: voteId },
         relations: ['user', 'brand1', 'brand2', 'brand3'],
       });
 
@@ -118,14 +118,14 @@ export class EmbedsService {
       this.logger.log(`🔍 Looking for vote: ${voteId}`);
 
       const vote = await this.votesRepository.findOne({
-        where: { id: voteId },
+        where: { transactionHash: voteId },
         relations: ['user', 'brand1', 'brand2', 'brand3'],
       });
 
       if (vote) {
         this.logger.log(`✅ Vote found: ${vote.user?.username}'s podium`);
         return {
-          id: vote.id,
+          transactionHash: vote.transactionHash,
           date: vote.date,
           user: vote.user?.username,
           brand1: vote.brand1?.name,

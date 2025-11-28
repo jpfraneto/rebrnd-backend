@@ -1,7 +1,7 @@
 /**
  * @file This file defines the User entity with its properties and methods.
  */
-import { Entity, Column, PrimaryGeneratedColumn, ManyToOne } from 'typeorm';
+import { Entity, Column, PrimaryColumn, ManyToOne } from 'typeorm';
 
 /**
  * @class UserBrandVotes
@@ -9,7 +9,10 @@ import { Entity, Column, PrimaryGeneratedColumn, ManyToOne } from 'typeorm';
  */
 @Entity({ name: 'user_brand_votes' })
 export class UserBrandVotes {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryColumn({ length: 66 })
+  transactionHash: string;
+
+  @Column({ nullable: true })
   id: string;
 
   @ManyToOne('User', 'userBrandVotes')
@@ -32,9 +35,6 @@ export class UserBrandVotes {
 
   @Column({ nullable: true })
   castHash: string;
-
-  @Column({ nullable: true, length: 66 })
-  transactionHash: string;
 
   // Reward claim fields
   @Column({ type: 'decimal', precision: 64, scale: 18, nullable: true })

@@ -1427,7 +1427,7 @@ export class AirdropService {
       console.log(
         `📤 [SHARED PODIUMS] Shared podium details:`,
         sharedPodiums.map((vote) => ({
-          id: vote.id,
+          transactionHash: vote.transactionHash,
           castHash: vote.castHash,
           date: vote.date,
         })),

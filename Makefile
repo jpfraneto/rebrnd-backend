@@ -50,7 +50,6 @@ migrate:
 	@echo "  2. Cleaning the new database (ALL DATA WILL BE DELETED)"
 	@echo "  3. Applying the new schema"
 	@echo "  4. Migrating all data from production"
-	@echo "  5. Calculating airdrop scores for top 1111 users"
 	@echo ""
 	@echo "Press Enter to continue, or Ctrl+C to cancel..."
 	@bash -c 'read -r dummy'
@@ -68,9 +67,6 @@ migrate:
 	@bash -c 'read -r dummy'
 	@$(MAKE) migrate-data
 	@echo ""
-	@echo "Press Enter to proceed to airdrop calculation..."
-	@bash -c 'read -r dummy'
-	@$(MAKE) migrate-airdrop
 	@echo ""
 	@echo "# =============================================================================="
 	@echo "✓ Migration completed successfully!"
@@ -179,10 +175,12 @@ migrate-data:
 	@echo "  1. Categories (no dependencies)"
 	@echo "  2. Tags (no dependencies)"
 	@echo "  3. Brands (depends on Categories) - ranking INT→STRING conversion"
-	@echo "  4. Users (no dependencies) - new fields set to defaults"
+	@echo "  4. Users (no dependencies) - includes notifications fields"
 	@echo "  5. BrandTags (depends on Brands and Tags)"
 	@echo "  6. UserBrandVotes (depends on Users and Brands) - new fields set to defaults"
-	@echo "  7. UserDailyActions (depends on Users)"
+	@echo "  7. Calculate User Fields - totalPodiums, votedBrandsCount, totalVotes,"
+	@echo "                            lastVoteDay, lastVoteTimestamp, favoriteBrandId"
+	@echo "  8. UserDailyActions (depends on Users)"
 	@echo ""
 	@echo "Note: New entities (AirdropScore, AirdropSnapshot, AirdropLeaf, RewardClaim)"
 	@echo "      will remain empty as they don't exist in production."

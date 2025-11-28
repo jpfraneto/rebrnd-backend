@@ -11,7 +11,6 @@ import {
   ManyToOne,
 } from 'typeorm';
 
-
 // Types
 import { UserRoleEnum } from './User.types';
 import type { Brand } from '../Brand/Brand.model';
@@ -51,7 +50,6 @@ export class User {
     default: UserRoleEnum.USER,
   })
   role: UserRoleEnum;
-
 
   @Column({
     default: 0,
@@ -125,7 +123,23 @@ export class User {
   @UpdateDateColumn()
   updatedAt: Date;
 
+  @Column({
+    default: false,
+  })
+  notificationsEnabled: boolean;
+
+  @Column({
+    default: null,
+    nullable: true,
+  })
+  notificationToken: string;
+
+  @Column({
+    default: null,
+    nullable: true,
+  })
+  lastVoteReminderSent: Date;
+
   @OneToMany('UserBrandVotes', 'user')
   userBrandVotes: any[];
-
 }

@@ -401,7 +401,7 @@ export class IndexerService {
         );
 
         await this.userBrandVotesRepository.update(
-          { id: userVote.id },
+          { transactionHash: userVote.transactionHash },
           {
             claimedAt: claimDate,
             claimTxHash: claimData.transactionHash,
@@ -412,7 +412,7 @@ export class IndexerService {
           },
         );
 
-        logger.log(`✅ [INDEXER] Updated UserBrandVotes: ${userVote.id}`);
+        logger.log(`✅ [INDEXER] Updated UserBrandVotes: ${userVote.transactionHash}`);
       } else {
         // This shouldn't normally happen - claim should come after vote
         // But create a placeholder record just in case
@@ -441,7 +441,10 @@ export class IndexerService {
         }
 
         // Create placeholder vote record with claim data
+        // Use claim transaction hash as primary key since vote transaction doesn't exist
+        // This is an edge case where claim came before vote (shouldn't normally happen)
         const placeholderVote = this.userBrandVotesRepository.create({
+          transactionHash: claimData.transactionHash, // Use claim tx hash as primary key
           user: { id: user.id },
           // These will be null since we don't have vote data
           brand1: null,
@@ -456,12 +459,11 @@ export class IndexerService {
           castHash: claimData.castHash,
           claimedAt: claimDate,
           claimTxHash: claimData.transactionHash,
-          transactionHash: null, // This would be the vote transaction
         });
 
         await this.userBrandVotesRepository.save(placeholderVote);
         logger.log(
-          `✅ [INDEXER] Created placeholder vote record: ${placeholderVote.id}`,
+          `✅ [INDEXER] Created placeholder vote record: ${placeholderVote.transactionHash}`,
         );
       }
 

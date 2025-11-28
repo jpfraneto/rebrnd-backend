@@ -206,7 +206,7 @@ export class BrandService {
       },
       firstVote: firstVote
         ? {
-            id: firstVote.id,
+            transactionHash: firstVote.transactionHash,
             timestamp: firstVote.date.toISOString(),
             timeFromDeployment:
               firstVote.date.getTime() - deploymentTime.getTime(),
@@ -214,7 +214,7 @@ export class BrandService {
         : null,
       latestVote: latestVote
         ? {
-            id: latestVote.id,
+            transactionHash: latestVote.transactionHash,
             timestamp: latestVote.date.toISOString(),
           }
         : null,
@@ -439,7 +439,7 @@ export class BrandService {
       },
       topBrands: scoreDifferences,
       recentVotes: recentVotes.map((vote) => ({
-        id: vote.id,
+        transactionHash: vote.transactionHash,
         date: vote.date.toISOString(),
         brands: [vote.brand1?.name, vote.brand2?.name, vote.brand3?.name],
       })),
@@ -1062,17 +1062,17 @@ export class BrandService {
   /**
    * Marks a vote as shared and stores the cast hash.
    *
-   * @param voteId - The vote ID to update
+   * @param transactionHash - The transaction hash (primary key) to update
    * @param castHash - The Farcaster cast hash
    * @returns Updated vote
    */
   async markVoteAsShared(
-    voteId: string,
+    transactionHash: string,
     castHash: string,
   ): Promise<UserBrandVotes> {
     try {
       const vote = await this.userBrandVotesRepository.findOne({
-        where: { id: voteId },
+        where: { transactionHash },
       });
 
       if (!vote) {
@@ -1222,7 +1222,7 @@ export class BrandService {
       }
       // Fetch the vote with all relations populated
       const voteWithRelations = await this.userBrandVotesRepository.findOne({
-        where: { id: savedVote.id },
+        where: { transactionHash: savedVote.transactionHash },
         relations: ['user', 'brand1', 'brand2', 'brand3'],
       });
 

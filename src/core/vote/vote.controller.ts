@@ -14,15 +14,15 @@ export class VoteController {
   constructor(private readonly voteService: VoteService) {}
 
   /**
-   * Retrieves a vote by its ID.
+   * Retrieves a vote by its transaction hash.
    *
-   * @param {Vote['id']} id - The ID of the vote to retrieve.
+   * @param {string} transactionHash - The transaction hash (primary key) of the vote to retrieve.
    * @returns {Promise<Vote | undefined>} The vote entity or undefined if not found.
    */
-  @Get('/:id')
-  getVoteById(
-    @Param('id') id: UserBrandVotes['id'],
+  @Get('/:transactionHash')
+  getVoteByTransactionHash(
+    @Param('transactionHash') transactionHash: string,
   ): Promise<UserBrandVotes | undefined> {
-    return this.voteService.getVotesById(id);
+    return this.voteService.getVotesByTransactionHash(transactionHash);
   }
 }

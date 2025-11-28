@@ -14,18 +14,24 @@ export class VoteService {
   ) {}
 
   /**
-   * Retrieves the votes by id.
+   * Retrieves the votes by transaction hash.
    *
-   * @param {User['id']} id - The ID of the user whose votes are to be retrieved.
-   * @param {number} unixDate - The Unix timestamp representing the day for which votes are to be retrieved.
-   * @returns {Promise<UserBrandVotes>} A promise that resolves to an object of the user's votes for the specified day.
+   * @param {string} transactionHash - The transaction hash (primary key) of the vote to retrieve.
+   * @returns {Promise<UserBrandVotes>} A promise that resolves to an object of the user's votes.
    */
-  async getVotesById(id: UserBrandVotes['id']): Promise<UserBrandVotes> {
+  async getVotesByTransactionHash(transactionHash: string): Promise<UserBrandVotes> {
     const userBrandVotes = await this.userBrandVotesRepository.findOne({
-      select: ['id', 'brand1', 'brand2', 'brand3', 'date'],
-      where: { id },
+      select: ['transactionHash', 'brand1', 'brand2', 'brand3', 'date'],
+      where: { transactionHash },
       relations: ['brand1', 'brand2', 'brand3'],
     });
     return userBrandVotes;
+  }
+
+  /**
+   * @deprecated Use getVotesByTransactionHash instead
+   */
+  async getVotesById(id: string): Promise<UserBrandVotes> {
+    return this.getVotesByTransactionHash(id);
   }
 }

@@ -72,7 +72,7 @@ export class NeynarNotificationService {
           startOfDay,
           endOfDay,
         })
-        .where('vote.id IS NULL') // No vote today
+        .where('vote.transactionHash IS NULL') // No vote today
         .select(['user.fid'])
         .getMany();
 
