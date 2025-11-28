@@ -108,6 +108,18 @@ export class IndexerService {
         return;
       }
 
+      // First check if this exact transaction was already processed
+      const existingVoteByTxHash = await this.userBrandVotesRepository.findOne({
+        where: { transactionHash: voteData.transactionHash },
+      });
+
+      if (existingVoteByTxHash) {
+        logger.log(
+          `⚠️ [INDEXER] Transaction ${voteData.transactionHash} already processed, skipping duplicate`,
+        );
+        return;
+      }
+
       // Then check if user already voted this day (business rule)
       const dayStart = new Date(voteDate);
       dayStart.setHours(0, 0, 0, 0);
@@ -222,16 +234,21 @@ export class IndexerService {
 
       logger.log(`✅ [INDEXER] Updated brand scores for vote: ${voteData.id}`);
 
-      // Update user calculated fields and add points
-      await this.userService.updateUserCalculatedFields(user.id);
-      await this.userService.addPoints(user.id, 3);
-
-      // Update user's last vote timestamp and day
+      // Update user's last vote timestamp and day FIRST
       await this.userRepository.update(user.id, {
         lastVoteTimestamp: voteDate,
         lastVoteDay: day,
         totalVotes: user.totalVotes + 1,
       });
+
+      // Then update calculated fields (which depend on the updated totalVotes)
+      await this.userService.updateUserCalculatedFields(user.id);
+      
+      // Calculate leaderboard points based on BRND power level
+      // Level 0 -> 3, Level 1 -> 6, Level 2 -> 9, etc.
+      // Formula: (level + 1) * 3
+      const leaderboardPoints = (user.brndPowerLevel + 1) * 3;
+      await this.userService.addPoints(user.id, leaderboardPoints);
 
       logger.log(`✅ [INDEXER] Vote processing completed: ${voteData.id}`);
     } catch (error) {
