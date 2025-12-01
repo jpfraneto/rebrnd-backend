@@ -910,11 +910,8 @@ export class ContractUploadService {
       logger.log(`🔑 [CONTRACT] Using admin wallet: ${account.address}`);
       logger.log(`📋 [CONTRACT] Contract address: ${contractAddress}`);
 
-      // Get starting nonce for manual nonce management
-      let currentNonce = await publicClient.getTransactionCount({
-        address: account.address,
-      });
-      logger.log(`🔢 [CONTRACT] Starting nonce: ${currentNonce}`);
+      // Initialize nonce management - will fetch fresh for each transaction
+      logger.log(`🔢 [CONTRACT] Using dynamic nonce management for reliability`);
 
       // Process in batches
       for (let i = 0; i < brands.length; i += this.BATCH_SIZE) {
@@ -951,11 +948,17 @@ export class ContractUploadService {
             gasEstimate.toString(),
           );
 
+          // Get fresh nonce for this transaction
+          const currentNonce = await publicClient.getTransactionCount({
+            address: account.address,
+            blockTag: 'pending', // Include pending transactions
+          });
+
           logger.log(
             `🔢 [CONTRACT] Batch ${batchNumber} using nonce: ${currentNonce}`,
           );
 
-          // Execute transaction with explicit nonce
+          // Execute transaction with fresh nonce
           const hash = await walletClient.writeContract({
             address: contractAddress,
             abi: CONTRACT_ABI,
@@ -982,9 +985,6 @@ export class ContractUploadService {
           // Mark brands as uploaded in database
           const brandIds = batch.map((brand) => brand.id);
           await this.markBrandsAsUploaded(brandIds);
-
-          // Increment nonce for next transaction
-          currentNonce++;
 
           logger.log(
             `✅ [CONTRACT] Batch ${batchNumber} successful: ${receipt.transactionHash}`,
