@@ -195,6 +195,74 @@ export class AirdropService {
     );
   }
 
+  /**
+   * OPTIMIZED: Check user eligibility with pre-fetched data
+   * This version avoids redundant API calls and DB queries
+   */
+  private async checkUserEligibilityOptimized(
+    fid: number,
+    userSystemPoints: number,
+    neynarUserInfoCache: Map<number, any>,
+    votedBrandsCount: number,
+    sharedPodiumsCount: number,
+  ): Promise<AirdropCalculation> {
+    // Check if user already has an airdrop score
+    const existingAirdropScore = await this.airdropScoreRepository.findOne({
+      where: { fid },
+    });
+
+    // Calculate multipliers with pre-fetched data
+    const multiplierData =
+      await this.calculateMultipliersWithBreakdownOptimized(
+        fid,
+        neynarUserInfoCache,
+        votedBrandsCount,
+        sharedPodiumsCount,
+      );
+
+    // Calculate total multiplier
+    const totalMultiplier = this.calculateTotalMultiplier(
+      multiplierData.multipliers,
+    );
+
+    // Calculate final airdrop score
+    const airdropScore = Math.round(userSystemPoints * totalMultiplier);
+
+    // Get token allocation and percentage (will be updated later in bulk)
+    let percentage = existingAirdropScore
+      ? Number(existingAirdropScore.percentage) || 0
+      : 0;
+    let tokenAllocation = existingAirdropScore
+      ? Number(existingAirdropScore.tokenAllocation) || 0
+      : 0;
+
+    // Leaderboard position will be calculated in bulk later
+    const leaderboardPosition = 0;
+
+    const calculation: AirdropCalculation = {
+      fid,
+      basePoints: userSystemPoints,
+      multipliers: multiplierData.multipliers,
+      totalMultiplier,
+      finalScore: airdropScore,
+      tokenAllocation,
+      percentage,
+      leaderboardPosition,
+      challenges: multiplierData.challenges,
+      previousScore: existingAirdropScore
+        ? {
+            finalScore: Number(existingAirdropScore.finalScore),
+            lastUpdated: existingAirdropScore.updatedAt,
+          }
+        : undefined,
+    };
+
+    // Save airdrop score (without leaderboard position for now)
+    await this.saveAirdropScore(calculation);
+
+    return calculation;
+  }
+
   private async getNeynarUserInfo(fid: number): Promise<any> {
     try {
       console.log(`🔍 [NEYNAR] Fetching user info for FID: ${fid}`);
@@ -1734,7 +1802,8 @@ export class AirdropService {
       `📈 [TOKEN RECALC] Total airdrop points: ${totalAirdropPoints.toLocaleString()}`,
     );
 
-    // Update token allocations for all users
+    // Update token allocations for all users using BULK SQL operation
+    console.log(`💰 [TOKEN RECALC] Starting BULK update for ${airdropScores.length} user allocations...`);
     let totalTokensAllocated = 0;
     const BRND_USD_PRICE = 0.000001365;
     const distributionStats = {
@@ -1746,6 +1815,12 @@ export class AirdropService {
       over30USD: 0,
     };
 
+    // Prepare CASE statements for bulk SQL update
+    const fidList: number[] = [];
+    const tokenAllocationCases: string[] = [];
+    const percentageCases: string[] = [];
+    
+    console.log(`🔢 [TOKEN RECALC] Calculating allocations for all users...`);
     for (const score of airdropScores) {
       const finalScore = Number(score.finalScore);
       const percentage = (finalScore / totalAirdropPoints) * 100;
@@ -1768,15 +1843,10 @@ export class AirdropService {
         continue;
       }
 
-      // Update database
-      await this.airdropScoreRepository.update(
-        { fid: score.fid },
-        {
-          tokenAllocation: tokenAllocation,
-          percentage: percentage,
-        },
-      );
-
+      fidList.push(score.fid);
+      tokenAllocationCases.push(`WHEN ${score.fid} THEN ${tokenAllocation}`);
+      percentageCases.push(`WHEN ${score.fid} THEN ${percentage}`);
+      
       totalTokensAllocated += tokenAllocation;
 
       // Categorize by USD value
@@ -1786,6 +1856,36 @@ export class AirdropService {
       else if (usdValue < 20) distributionStats.under20USD++;
       else if (usdValue >= 30) distributionStats.over30USD++;
       else distributionStats.over20USD++;
+    }
+
+    // Execute BULK update using raw SQL with CASE statements
+    console.log(`🚀 [TOKEN RECALC] Executing BULK SQL update for ${fidList.length} users...`);
+    const updateStartTime = Date.now();
+    
+    try {
+      // Get the correct table name from TypeORM metadata
+      const tableName = this.airdropScoreRepository.metadata.tableName;
+      console.log(`📋 [TOKEN RECALC] Using table name: ${tableName}`);
+      
+      const sql = `
+        UPDATE ${tableName} 
+        SET 
+          tokenAllocation = CASE fid ${tokenAllocationCases.join(' ')} END,
+          percentage = CASE fid ${percentageCases.join(' ')} END,
+          updatedAt = NOW()
+        WHERE fid IN (${fidList.join(',')})
+      `;
+      
+      const result = await this.airdropScoreRepository.query(sql);
+      const updateDuration = Date.now() - updateStartTime;
+      
+      console.log(`✅ [TOKEN RECALC] BULK update completed in ${updateDuration}ms!`);
+      console.log(`📊 [TOKEN RECALC] Updated ${fidList.length} users in a single query`);
+      
+    } catch (error) {
+      console.error(`❌ [TOKEN RECALC] BULK update failed:`, error);
+      console.error(`🔍 [TOKEN RECALC] SQL that failed:`, error.sql?.substring(0, 500) + '...');
+      throw error;
     }
 
     // Set zero allocation for users with 0 score - do this FIRST
@@ -1912,7 +2012,616 @@ export class AirdropService {
     };
   }
 
-  async calculateAirdropForAllUsers(batchSize: number = 10): Promise<{
+  /**
+   * OPTIMIZED: Batch fetch Neynar user info for multiple FIDs at once
+   * Neynar bulk API supports up to 100 FIDs per request
+   */
+  private async batchGetNeynarUserInfo(
+    fids: number[],
+  ): Promise<Map<number, any>> {
+    const userInfoMap = new Map<number, any>();
+    const apiKey = getConfig().neynar.apiKey.replace(/&$/, '');
+    const MAX_FIDS_PER_REQUEST = 100; // Neynar bulk API limit
+
+    // Split into chunks of 100
+    for (let i = 0; i < fids.length; i += MAX_FIDS_PER_REQUEST) {
+      const chunk = fids.slice(i, i + MAX_FIDS_PER_REQUEST);
+      const fidsParam = chunk.join(',');
+
+      try {
+        const response = await fetch(
+          `https://api.neynar.com/v2/farcaster/user/bulk?fids=${fidsParam}`,
+          {
+            headers: {
+              accept: 'application/json',
+              api_key: apiKey,
+            },
+          },
+        );
+
+        if (!response.ok) {
+          console.error(
+            `Neynar API error for batch: ${response.status} ${response.statusText}`,
+          );
+          continue;
+        }
+
+        const data = await response.json();
+        if (data?.users) {
+          for (const user of data.users) {
+            if (user?.fid) {
+              userInfoMap.set(user.fid, user);
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching batch Neynar user info:`, error);
+      }
+    }
+
+    return userInfoMap;
+  }
+
+  /**
+   * OPTIMIZED: Pre-fetch all vote data for users in bulk using raw SQL
+   * Returns maps for quick lookup: votedBrandsCount and sharedPodiumsCount
+   */
+  private async preFetchVoteData(fids: number[]): Promise<{
+    votedBrandsCountMap: Map<number, number>;
+    sharedPodiumsCountMap: Map<number, number>;
+  }> {
+    const votedBrandsCountMap = new Map<number, number>();
+    const sharedPodiumsCountMap = new Map<number, number>();
+
+    if (fids.length === 0) {
+      return { votedBrandsCountMap, sharedPodiumsCountMap };
+    }
+
+    try {
+      const queryRunner =
+        this.userRepository.manager.connection.createQueryRunner();
+
+      try {
+        // Get unique voted brands count per user using parameterized query
+        const votedBrandsQuery = `
+          SELECT 
+            u.fid,
+            COUNT(DISTINCT brand_id) as votedBrandsCount
+          FROM users u
+          INNER JOIN (
+            SELECT userId, brand1Id as brand_id FROM user_brand_votes WHERE brand1Id IS NOT NULL
+            UNION
+            SELECT userId, brand2Id as brand_id FROM user_brand_votes WHERE brand2Id IS NOT NULL
+            UNION
+            SELECT userId, brand3Id as brand_id FROM user_brand_votes WHERE brand3Id IS NOT NULL
+          ) unique_brands ON u.id = unique_brands.userId
+          WHERE u.fid IN (${fids.map(() => '?').join(',')})
+          GROUP BY u.fid
+        `;
+
+        // Get shared podiums count per user using parameterized query
+        const sharedPodiumsQuery = `
+          SELECT 
+            u.fid,
+            COUNT(*) as sharedPodiumsCount
+          FROM users u
+          INNER JOIN user_brand_votes ubv ON u.id = ubv.userId
+          WHERE u.fid IN (${fids.map(() => '?').join(',')})
+            AND ubv.shared = 1
+            AND ubv.castHash IS NOT NULL
+          GROUP BY u.fid
+        `;
+
+        // Execute both queries with parameters
+        const [votedBrandsResults, sharedPodiumsResults] = await Promise.all([
+          queryRunner.query(votedBrandsQuery, fids),
+          queryRunner.query(sharedPodiumsQuery, fids),
+        ]);
+
+        // Build maps
+        for (const row of votedBrandsResults) {
+          votedBrandsCountMap.set(row.fid, Number(row.votedBrandsCount) || 0);
+        }
+
+        for (const row of sharedPodiumsResults) {
+          sharedPodiumsCountMap.set(
+            row.fid,
+            Number(row.sharedPodiumsCount) || 0,
+          );
+        }
+
+        // Set 0 for users not found in results
+        for (const fid of fids) {
+          if (!votedBrandsCountMap.has(fid)) {
+            votedBrandsCountMap.set(fid, 0);
+          }
+          if (!sharedPodiumsCountMap.has(fid)) {
+            sharedPodiumsCountMap.set(fid, 0);
+          }
+        }
+      } finally {
+        await queryRunner.release();
+      }
+    } catch (error) {
+      console.error('Error pre-fetching vote data:', error);
+      // Set defaults on error
+      for (const fid of fids) {
+        votedBrandsCountMap.set(fid, 0);
+        sharedPodiumsCountMap.set(fid, 0);
+      }
+    }
+
+    return { votedBrandsCountMap, sharedPodiumsCountMap };
+  }
+
+  /**
+   * OPTIMIZED: Calculate multipliers with pre-fetched data to avoid redundant calls
+   */
+  private async calculateMultipliersWithBreakdownOptimized(
+    fid: number,
+    neynarUserInfoCache: Map<number, any>,
+    votedBrandsCount: number,
+    sharedPodiumsCount: number,
+  ): Promise<{
+    multipliers: AirdropMultipliers;
+    challenges: ChallengeBreakdown[];
+  }> {
+    // Get cached user info (or fetch if not in cache)
+    let userInfo = neynarUserInfoCache.get(fid);
+    if (!userInfo) {
+      userInfo = await this.getNeynarUserInfo(fid);
+      if (userInfo) {
+        neynarUserInfoCache.set(fid, userInfo);
+      }
+    }
+
+    // Execute multiplier calculations in parallel
+    const [
+      followAccountsResult,
+      channelInteractionResult,
+      holdingResult,
+      collectiblesResult,
+      sharedPodiumsResult,
+      neynarScoreResult,
+      proUserResult,
+    ] = await Promise.all([
+      this.calculateFollowAccountsMultiplier(fid),
+      this.calculateChannelInteractionMultiplier(fid),
+      this.calculateHoldingMultiplierOptimized(fid, userInfo),
+      this.calculateCollectiblesMultiplier(fid),
+      Promise.resolve({
+        multiplier:
+          this.getSharedPodiumsMultiplierFromCount(sharedPodiumsCount),
+        sharedPodiumsCount,
+      }),
+      this.calculateNeynarScoreMultiplierOptimized(userInfo),
+      this.calculateProUserMultiplierOptimized(userInfo),
+    ]);
+
+    // Use pre-fetched voted brands count
+    const votedBrandsResult = {
+      multiplier: this.getVotedBrandsMultiplierFromCount(votedBrandsCount),
+      votedBrandsCount,
+    };
+
+    // Build challenges array (same structure as before)
+    const challenges: ChallengeBreakdown[] = [
+      {
+        name: 'Follow Accounts',
+        description: 'Follow @brnd + @floc accounts',
+        currentValue: followAccountsResult.followedCount,
+        currentMultiplier: followAccountsResult.multiplier,
+        maxMultiplier: 1.4,
+        completed: followAccountsResult.followedCount >= 2,
+        progress: {
+          current: followAccountsResult.followedCount,
+          required: 2,
+          unit: 'following',
+        },
+        tiers: [
+          {
+            requirement: 1,
+            multiplier: 1.2,
+            achieved: followAccountsResult.followedCount >= 1,
+          },
+          {
+            requirement: 2,
+            multiplier: 1.4,
+            achieved: followAccountsResult.followedCount >= 2,
+          },
+        ],
+        details: followAccountsResult.details,
+      },
+      {
+        name: 'Channel Interaction',
+        description: 'Follow @brnd channel + publish podium casts',
+        currentValue: channelInteractionResult.podiumCastsCount,
+        currentMultiplier: channelInteractionResult.multiplier,
+        maxMultiplier: 1.4,
+        completed:
+          channelInteractionResult.podiumCastsCount >= 1 &&
+          channelInteractionResult.isFollowingChannel,
+        progress: {
+          current: channelInteractionResult.podiumCastsCount,
+          required: 1,
+          unit: 'casts',
+        },
+        tiers: [
+          {
+            requirement: 1,
+            multiplier: 1.2,
+            achieved: channelInteractionResult.isFollowingChannel,
+          },
+          {
+            requirement: 1,
+            multiplier: 1.4,
+            achieved:
+              channelInteractionResult.podiumCastsCount >= 1 &&
+              channelInteractionResult.isFollowingChannel,
+          },
+        ],
+        details: {
+          isFollowingChannel: channelInteractionResult.isFollowingChannel,
+          podiumCastsCount: channelInteractionResult.podiumCastsCount,
+        },
+      },
+      {
+        name: 'Holding BRND',
+        description: 'Hold BRND tokens in wallet or staked',
+        currentValue: holdingResult.totalBalance,
+        currentMultiplier: holdingResult.multiplier,
+        maxMultiplier: 1.8,
+        completed: holdingResult.totalBalance >= 800_000_000,
+        progress: {
+          current: holdingResult.totalBalance,
+          required: 800_000_000,
+          unit: 'BRND',
+        },
+        tiers: [
+          {
+            requirement: 100_000_000,
+            multiplier: 1.2,
+            achieved: holdingResult.totalBalance >= 100_000_000,
+          },
+          {
+            requirement: 200_000_000,
+            multiplier: 1.4,
+            achieved: holdingResult.totalBalance >= 200_000_000,
+          },
+          {
+            requirement: 400_000_000,
+            multiplier: 1.6,
+            achieved: holdingResult.totalBalance >= 400_000_000,
+          },
+          {
+            requirement: 800_000_000,
+            multiplier: 1.8,
+            achieved: holdingResult.totalBalance >= 800_000_000,
+          },
+        ],
+        details: {
+          walletBalance: holdingResult.walletBalance,
+          stakedBalance: holdingResult.stakedBalance,
+          totalBalance: holdingResult.totalBalance,
+        },
+      },
+      {
+        name: 'Collectibles',
+        description: 'Collect BRND cast collectibles',
+        currentValue: collectiblesResult.collectiblesCount,
+        currentMultiplier: collectiblesResult.multiplier,
+        maxMultiplier: 1.8,
+        completed: collectiblesResult.collectiblesCount >= 3,
+        progress: {
+          current: collectiblesResult.collectiblesCount,
+          required: 3,
+          unit: 'collectibles',
+        },
+        tiers: [
+          {
+            requirement: 1,
+            multiplier: 1.2,
+            achieved: collectiblesResult.collectiblesCount >= 1,
+          },
+          {
+            requirement: 2,
+            multiplier: 1.4,
+            achieved: collectiblesResult.collectiblesCount >= 2,
+          },
+          {
+            requirement: 3,
+            multiplier: 1.8,
+            achieved: collectiblesResult.collectiblesCount >= 3,
+          },
+        ],
+      },
+      {
+        name: 'Voted Brands',
+        description: 'Vote for unique brands',
+        currentValue: votedBrandsResult.votedBrandsCount,
+        currentMultiplier: votedBrandsResult.multiplier,
+        maxMultiplier: 1.8,
+        completed: votedBrandsResult.votedBrandsCount >= 72,
+        progress: {
+          current: votedBrandsResult.votedBrandsCount,
+          required: 72,
+          unit: 'brands',
+        },
+        tiers: [
+          {
+            requirement: 9,
+            multiplier: 1.2,
+            achieved: votedBrandsResult.votedBrandsCount >= 9,
+          },
+          {
+            requirement: 18,
+            multiplier: 1.4,
+            achieved: votedBrandsResult.votedBrandsCount >= 18,
+          },
+          {
+            requirement: 36,
+            multiplier: 1.6,
+            achieved: votedBrandsResult.votedBrandsCount >= 36,
+          },
+          {
+            requirement: 72,
+            multiplier: 1.8,
+            achieved: votedBrandsResult.votedBrandsCount >= 72,
+          },
+        ],
+      },
+      {
+        name: 'Shared Podiums',
+        description: 'Share your podium casts',
+        currentValue: sharedPodiumsResult.sharedPodiumsCount,
+        currentMultiplier: sharedPodiumsResult.multiplier,
+        maxMultiplier: 1.8,
+        completed: sharedPodiumsResult.sharedPodiumsCount >= 80,
+        progress: {
+          current: sharedPodiumsResult.sharedPodiumsCount,
+          required: 80,
+          unit: 'podiums',
+        },
+        tiers: [
+          {
+            requirement: 10,
+            multiplier: 1.2,
+            achieved: sharedPodiumsResult.sharedPodiumsCount >= 10,
+          },
+          {
+            requirement: 20,
+            multiplier: 1.4,
+            achieved: sharedPodiumsResult.sharedPodiumsCount >= 20,
+          },
+          {
+            requirement: 40,
+            multiplier: 1.6,
+            achieved: sharedPodiumsResult.sharedPodiumsCount >= 40,
+          },
+          {
+            requirement: 80,
+            multiplier: 1.8,
+            achieved: sharedPodiumsResult.sharedPodiumsCount >= 80,
+          },
+        ],
+      },
+      {
+        name: 'Neynar Score',
+        description: 'Maintain high Neynar power badge score',
+        currentValue: neynarScoreResult.neynarScore,
+        currentMultiplier: neynarScoreResult.multiplier,
+        maxMultiplier: 1.8,
+        completed: neynarScoreResult.neynarScore >= 1.0,
+        progress: {
+          current: neynarScoreResult.neynarScore,
+          required: 1.0,
+          unit: 'score',
+        },
+        tiers: [
+          {
+            requirement: 0.85,
+            multiplier: 1.2,
+            achieved: neynarScoreResult.neynarScore >= 0.85,
+          },
+          {
+            requirement: 0.9,
+            multiplier: 1.5,
+            achieved: neynarScoreResult.neynarScore >= 0.9,
+          },
+          {
+            requirement: 1.0,
+            multiplier: 1.8,
+            achieved: neynarScoreResult.neynarScore >= 1.0,
+          },
+        ],
+        details: {
+          hasPowerBadge: neynarScoreResult.hasPowerBadge,
+        },
+      },
+      {
+        name: 'Pro User',
+        description: 'Subscribe to Farcaster Pro',
+        currentValue: proUserResult.isProUser ? 1 : 0,
+        currentMultiplier: proUserResult.multiplier,
+        maxMultiplier: 1.4,
+        completed:
+          proUserResult.isProUser && proUserResult.hasBrndTokenInProfile,
+        progress: {
+          current: proUserResult.isProUser ? 1 : 0,
+          required: 1,
+          unit: 'subscription',
+        },
+        tiers: [
+          {
+            requirement: 1,
+            multiplier: 1.2,
+            achieved: proUserResult.isProUser,
+          },
+          {
+            requirement: 1,
+            multiplier: 1.4,
+            achieved:
+              proUserResult.isProUser && proUserResult.hasBrndTokenInProfile,
+          },
+        ],
+        details: {
+          isProUser: proUserResult.isProUser,
+          hasBrndTokenInProfile: proUserResult.hasBrndTokenInProfile,
+        },
+      },
+    ];
+
+    return {
+      multipliers: {
+        followAccounts: followAccountsResult.multiplier,
+        channelInteraction: channelInteractionResult.multiplier,
+        holdingBrnd: holdingResult.multiplier,
+        collectibles: collectiblesResult.multiplier,
+        votedBrands: votedBrandsResult.multiplier,
+        sharedPodiums: sharedPodiumsResult.multiplier,
+        neynarScore: neynarScoreResult.multiplier,
+        proUser: proUserResult.multiplier,
+      },
+      challenges,
+    };
+  }
+
+  /**
+   * Helper: Get multiplier from voted brands count
+   */
+  private getVotedBrandsMultiplierFromCount(count: number): number {
+    if (count >= 72) return 1.8;
+    if (count >= 36) return 1.6;
+    if (count >= 18) return 1.4;
+    if (count >= 9) return 1.2;
+    return 1.0;
+  }
+
+  /**
+   * Helper: Get multiplier from shared podiums count
+   */
+  private getSharedPodiumsMultiplierFromCount(count: number): number {
+    if (count >= 80) return 1.8;
+    if (count >= 40) return 1.6;
+    if (count >= 20) return 1.4;
+    if (count >= 10) return 1.2;
+    return 1.0;
+  }
+
+  /**
+   * OPTIMIZED: Calculate holding multiplier with pre-fetched user info
+   */
+  private async calculateHoldingMultiplierOptimized(
+    fid: number,
+    userInfo: any,
+  ): Promise<{
+    multiplier: number;
+    totalBalance: number;
+    walletBalance: number;
+    stakedBalance: number;
+  }> {
+    try {
+      if (!userInfo?.verified_addresses?.eth_addresses) {
+        return {
+          multiplier: 1.0,
+          totalBalance: 0,
+          walletBalance: 0,
+          stakedBalance: 0,
+        };
+      }
+
+      const ethAddresses = userInfo.verified_addresses.eth_addresses;
+      const balancePromises = ethAddresses.map(async (address: string) => {
+        const [walletBalance, stakedBalance] = await Promise.all([
+          this.getBrndBalance(address),
+          this.getStakedBrndBalance(address),
+        ]);
+        return { walletBalance, stakedBalance };
+      });
+
+      const addressBalances = await Promise.all(balancePromises);
+      const totalWalletBalance = addressBalances.reduce(
+        (sum, balance) => sum + balance.walletBalance,
+        0,
+      );
+      const totalStakedBalance = addressBalances.reduce(
+        (sum, balance) => sum + balance.stakedBalance,
+        0,
+      );
+      const totalBalance = totalWalletBalance + totalStakedBalance;
+
+      let multiplier = 1.0;
+      if (totalBalance >= 800_000_000) multiplier = 1.8;
+      else if (totalBalance >= 400_000_000) multiplier = 1.6;
+      else if (totalBalance >= 200_000_000) multiplier = 1.4;
+      else if (totalBalance >= 100_000_000) multiplier = 1.2;
+
+      return {
+        multiplier,
+        totalBalance,
+        walletBalance: totalWalletBalance,
+        stakedBalance: totalStakedBalance,
+      };
+    } catch (error) {
+      console.error('Error calculating holdings multiplier:', error);
+      return {
+        multiplier: 1.0,
+        totalBalance: 0,
+        walletBalance: 0,
+        stakedBalance: 0,
+      };
+    }
+  }
+
+  /**
+   * OPTIMIZED: Calculate Neynar score multiplier with pre-fetched user info
+   */
+  private calculateNeynarScoreMultiplierOptimized(userInfo: any): {
+    multiplier: number;
+    neynarScore: number;
+    hasPowerBadge: boolean;
+  } {
+    const hasPowerBadge = userInfo?.power_badge || false;
+    const neynarScore = hasPowerBadge ? 1.0 : 0.8;
+
+    let multiplier = 1.0;
+    if (neynarScore >= 1.0) multiplier = 1.8;
+    else if (neynarScore >= 0.9) multiplier = 1.5;
+    else if (neynarScore >= 0.85) multiplier = 1.2;
+
+    return { multiplier, neynarScore, hasPowerBadge };
+  }
+
+  /**
+   * OPTIMIZED: Calculate Pro User multiplier with pre-fetched user info
+   */
+  private calculateProUserMultiplierOptimized(userInfo: any): {
+    multiplier: number;
+    isProUser: boolean;
+    hasBrndTokenInProfile: boolean;
+  } {
+    if (!userInfo) {
+      return {
+        multiplier: 1.0,
+        isProUser: false,
+        hasBrndTokenInProfile: false,
+      };
+    }
+
+    const isProUser =
+      userInfo.pro?.status === 'subscribed' &&
+      userInfo.pro?.expires_at &&
+      new Date(userInfo.pro.expires_at) > new Date();
+    const hasBrndTokenInProfile = false; // TODO: Implement if needed
+
+    let multiplier = 1.0;
+    if (isProUser && hasBrndTokenInProfile) multiplier = 1.4;
+    else if (isProUser) multiplier = 1.2;
+
+    return { multiplier, isProUser, hasBrndTokenInProfile };
+  }
+
+  async calculateAirdropForAllUsers(batchSize: number = 50): Promise<{
     databaseSummary: any;
     eligibleUsers: number;
     totalAirdropPoints: number;
@@ -1930,7 +2639,7 @@ export class AirdropService {
     }>;
   }> {
     console.log(
-      `🚀 [BULK AIRDROP] Starting airdrop calculation for TOP 1111 USERS by points`,
+      `🚀 [BULK AIRDROP] Starting OPTIMIZED airdrop calculation for TOP 1111 USERS by points`,
     );
 
     // STEP 1: Generate database summary first
@@ -1943,7 +2652,7 @@ export class AirdropService {
       `🏆 [BULK AIRDROP] STEP 2: Fetching top 1111 users by points...`,
     );
     const users = await this.userRepository.find({
-      select: ['fid', 'username', 'points'],
+      select: ['fid', 'username', 'points', 'id'],
       order: { points: 'DESC' },
       take: this.TOP_USERS, // 1111
     });
@@ -1952,7 +2661,19 @@ export class AirdropService {
       `👑 [BULK AIRDROP] Found ${users.length} eligible users for airdrop`,
     );
     console.log(
-      `📦 [BULK AIRDROP] STEP 3: Processing in batches of ${batchSize} users`,
+      `📦 [BULK AIRDROP] STEP 3: Pre-fetching vote data for all users...`,
+    );
+
+    // STEP 3: Pre-fetch all vote data in bulk (OPTIMIZATION)
+    const allFids = users.map((u) => u.fid);
+    const { votedBrandsCountMap, sharedPodiumsCountMap } =
+      await this.preFetchVoteData(allFids);
+    console.log(
+      `✅ [BULK AIRDROP] Pre-fetched vote data for ${allFids.length} users`,
+    );
+
+    console.log(
+      `📦 [BULK AIRDROP] STEP 4: Processing in batches of ${batchSize} users`,
     );
 
     let processed = 0;
@@ -1965,19 +2686,36 @@ export class AirdropService {
       airdropScore: number;
     }> = [];
 
-    // STEP 4: Calculate airdrop scores for all eligible users
+    // STEP 4: Calculate airdrop scores for all eligible users (OPTIMIZED)
     for (let i = 0; i < users.length; i += batchSize) {
       const batch = users.slice(i, i + batchSize);
+      const batchFids = batch.map((u) => u.fid);
+      const batchNumber = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(users.length / batchSize);
+
       console.log(
-        `📦 [BULK AIRDROP] Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(users.length / batchSize)} (users ${i + 1}-${Math.min(i + batchSize, users.length)})`,
+        `📦 [BULK AIRDROP] Processing batch ${batchNumber}/${totalBatches} (users ${i + 1}-${Math.min(i + batchSize, users.length)})`,
       );
 
+      // OPTIMIZATION: Batch fetch Neynar user info for entire batch
+      console.log(
+        `🔍 [BULK AIRDROP] Batch ${batchNumber}: Fetching Neynar user info for ${batchFids.length} users...`,
+      );
+      const neynarUserInfoCache = await this.batchGetNeynarUserInfo(batchFids);
+      console.log(
+        `✅ [BULK AIRDROP] Batch ${batchNumber}: Cached ${neynarUserInfoCache.size} user info records`,
+      );
+
+      // Process each user in the batch
       for (const user of batch) {
         try {
-          console.log(
-            `🎯 [BULK AIRDROP] Processing user ${user.fid} (${user.username})`,
+          const calculation = await this.checkUserEligibilityOptimized(
+            user.fid,
+            user.points,
+            neynarUserInfoCache,
+            votedBrandsCountMap.get(user.fid) || 0,
+            sharedPodiumsCountMap.get(user.fid) || 0,
           );
-          const calculation = await this.checkUserEligibility(user.fid);
 
           airdropCalculations.push({
             fid: user.fid,
@@ -1986,9 +2724,6 @@ export class AirdropService {
           });
 
           successful++;
-          console.log(
-            `✅ [BULK AIRDROP] Successfully processed user ${user.fid} - Airdrop Score: ${calculation.finalScore}`,
-          );
         } catch (error) {
           console.error(
             `❌ [BULK AIRDROP] Failed to process user ${user.fid}:`,
@@ -2004,13 +2739,12 @@ export class AirdropService {
       }
 
       console.log(
-        `📊 [BULK AIRDROP] Batch complete. Progress: ${processed}/${users.length} (${Math.round((processed / users.length) * 100)}%)`,
+        `📊 [BULK AIRDROP] Batch ${batchNumber} complete. Progress: ${processed}/${users.length} (${Math.round((processed / users.length) * 100)}%)`,
       );
 
-      // Add a small delay between batches to be nice to external APIs
+      // Reduced delay - only 500ms between batches (was 2000ms)
       if (i + batchSize < users.length) {
-        console.log(`⏳ [BULK AIRDROP] Waiting 2 seconds before next batch...`);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
 
@@ -2071,6 +2805,26 @@ export class AirdropService {
     console.log(
       `📊 [BULK AIRDROP] Top airdrop scorer: ${topAirdropScores[0]?.username} with ${topAirdropScores[0]?.airdropScore.toLocaleString()} points (${topAirdropScores[0]?.tokenAllocation.toLocaleString()} tokens)`,
     );
+
+    // STEP 6: Recalculate token distributions (only if no snapshot exists yet)
+    console.log(`🔍 [BULK AIRDROP] STEP 6: Checking for existing snapshots...`);
+    const existingSnapshotsCount = await this.airdropSnapshotRepository.count();
+    
+    if (existingSnapshotsCount === 0) {
+      console.log(`🔄 [BULK AIRDROP] No snapshots found - recalculating token distributions...`);
+      try {
+        const tokenDistribution = await this.recalculateTokenDistribution();
+        console.log(`✅ [BULK AIRDROP] Token distribution recalculated successfully!`, {
+          totalUsers: tokenDistribution.totalUsers,
+          totalTokensAllocated: tokenDistribution.totalTokensAllocated.toLocaleString(),
+        });
+      } catch (error) {
+        console.error(`❌ [BULK AIRDROP] Failed to recalculate token distribution:`, error);
+        // Don't throw - allow the function to continue and return results
+      }
+    } else {
+      console.log(`⚠️ [BULK AIRDROP] ${existingSnapshotsCount} snapshot(s) exist - skipping token recalculation to preserve frozen allocations`);
+    }
 
     return {
       databaseSummary,

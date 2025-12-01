@@ -907,6 +907,7 @@ export class AdminController {
     try {
       console.log('🌳 [ADMIN] Starting airdrop snapshot generation...');
       console.log(`👤 [ADMIN] Triggered by admin FID: ${user.sub}`);
+      console.log('ℹ️ [ADMIN] Note: Token allocations are automatically calculated during daily score updates');
 
       const snapshot = await this.airdropService.generateAirdropSnapshot();
       console.log('✅ [ADMIN] Airdrop snapshot generated successfully!');
@@ -1181,6 +1182,216 @@ export class AdminController {
         success: false,
         error: error.message,
       };
+    }
+  }
+
+  /**
+   * Sync existing brands from contract - marks brands already on contract as uploaded in database
+   */
+  @Get('brands/sync-existing-from-contract')
+  async syncExistingBrandsFromContract(@Res() res: Response) {
+    logger.log(`syncExistingBrandsFromContract called - testing mode (no auth)`);
+
+    try {
+      logger.log('Starting sync of existing brands from contract...');
+
+      const result = await this.contractUploadService.syncExistingBrandsFromContract();
+
+      return hasResponse(res, {
+        success: true,
+        message: `Synced ${result.markedAsUploaded}/${result.checkedBrands} brands from contract`,
+        result: {
+          checkedBrands: result.checkedBrands,
+          markedAsUploaded: result.markedAsUploaded,
+          brandHandles: result.brandHandles,
+        },
+      });
+    } catch (error) {
+      logger.error('Error syncing existing brands from contract:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'syncExistingBrandsFromContract',
+        `Sync failed: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Retry failed brand uploads - this will skip brands already on contract and only upload new ones
+   */
+  @Get('brands/retry-failed-uploads')
+  async retryFailedUploads(@Res() res: Response) {
+    logger.log(`retryFailedUploads called - testing mode (no auth)`);
+
+    try {
+      logger.log('Starting retry of failed brand uploads...');
+
+      // First sync existing brands from contract to avoid duplicates
+      logger.log('Step 1: Syncing existing brands from contract...');
+      const syncResult = await this.contractUploadService.syncExistingBrandsFromContract();
+      logger.log(`Synced ${syncResult.markedAsUploaded} existing brands from contract`);
+
+      // Then get remaining brands to upload
+      logger.log('Step 2: Getting remaining brands to upload...');
+      const brands = await this.contractUploadService.getAllBrandsForContract();
+      logger.log(`Found ${brands.length} remaining brands to upload`);
+
+      if (brands.length === 0) {
+        return hasResponse(res, {
+          success: true,
+          message: 'No remaining brands to upload - all brands are already on contract',
+          summary: {
+            syncedFromContract: syncResult.markedAsUploaded,
+            remainingToUpload: 0,
+            successfulBrands: 0,
+            failedBrands: 0,
+            gasUsed: 0,
+            transactionHashes: [],
+          },
+        });
+      }
+
+      // Validate the remaining brands
+      const validation = this.contractUploadService.validateBrandsForContract(brands);
+      if (!validation.valid) {
+        logger.error('Brand validation failed:', validation.issues);
+        return hasError(
+          res,
+          HttpStatus.BAD_REQUEST,
+          'retryFailedUploads',
+          `Validation failed: ${validation.issues.join(', ')}`,
+        );
+      }
+
+      logger.log('✅ Brand validation passed');
+
+      // Upload remaining brands
+      logger.log('Step 3: Uploading remaining brands...');
+      const result = await this.contractUploadService.uploadBrandsToContract(brands, false); // Don't reset flags
+
+      const summary = {
+        syncedFromContract: syncResult.markedAsUploaded,
+        remainingToUpload: brands.length,
+        batchesProcessed: result.batchesProcessed,
+        successfulBrands: result.successfulBrands,
+        failedBrands: result.failedBrands,
+        gasUsed: result.totalGasUsed,
+        transactionHashes: result.txHashes,
+      };
+
+      if (result.errors.length > 0) {
+        logger.error('Some batches failed during retry upload:', result.errors);
+      }
+
+      const success = result.successfulBrands > 0 || syncResult.markedAsUploaded > 0;
+      const message = success
+        ? `Retry completed: Synced ${syncResult.markedAsUploaded} existing brands, uploaded ${result.successfulBrands}/${brands.length} remaining brands`
+        : 'Retry failed: No brands were processed successfully';
+
+      return hasResponse(res, {
+        success,
+        message,
+        summary,
+        errors: result.errors.length > 0 ? result.errors : undefined,
+      });
+    } catch (error) {
+      logger.error('Critical error during retry failed uploads:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'retryFailedUploads',
+        `Retry failed: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Diagnostic endpoint - test specific brand handles against contract
+   */
+  @Get('brands/test-contract-handles')
+  async testContractHandles(@Res() res: Response) {
+    logger.log(`testContractHandles called - testing mode (no auth)`);
+
+    try {
+      // Test the specific brands that are failing
+      const testHandles = ['clanker', 'anon', 'juicebox', 'paybot', 'swapbot'];
+      
+      const results = [];
+      
+      for (const handle of testHandles) {
+        try {
+          const exists = await this.contractUploadService.checkIfBrandExistsOnContract(handle);
+          results.push({ handle, exists, error: null });
+        } catch (error) {
+          results.push({ handle, exists: null, error: error.message });
+        }
+      }
+
+      // Also try to get contract brand count
+      let contractBrandCount = null;
+      let contractCountError = null;
+      try {
+        contractBrandCount = await this.contractUploadService.getContractBrandCount();
+      } catch (error) {
+        contractCountError = error.message;
+      }
+
+      // Get database counts
+      const dbTotal = await this.contractUploadService.getDatabaseBrandCount();
+      const dbUploaded = await this.contractUploadService.getUploadedBrandCount();
+      const dbNotUploaded = dbTotal - dbUploaded;
+
+      return hasResponse(res, {
+        success: true,
+        message: 'Contract handle test completed',
+        results: {
+          handleTests: results,
+          contractBrandCount,
+          contractCountError,
+          databaseCounts: {
+            total: dbTotal,
+            uploaded: dbUploaded,
+            notUploaded: dbNotUploaded,
+          },
+        },
+      });
+    } catch (error) {
+      logger.error('Error testing contract handles:', error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'testContractHandles',
+        `Test failed: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Test uploading a single brand to isolate the issue
+   */
+  @Get('brands/test-single-upload/:handle')
+  async testSingleBrandUpload(@Param('handle') handle: string, @Res() res: Response) {
+    logger.log(`testSingleBrandUpload called for handle: ${handle} - testing mode (no auth)`);
+
+    try {
+      const result = await this.contractUploadService.testUploadSingleBrand(handle);
+
+      return hasResponse(res, {
+        success: result.success,
+        message: result.success 
+          ? `Successfully uploaded test brand: ${handle}`
+          : `Failed to upload test brand: ${handle}`,
+        result,
+      });
+    } catch (error) {
+      logger.error(`Error testing single brand upload for ${handle}:`, error);
+      return hasError(
+        res,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+        'testSingleBrandUpload',
+        `Test failed: ${error.message}`,
+      );
     }
   }
 }

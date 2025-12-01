@@ -128,6 +128,23 @@ export class DailyService {
     logger.log('🏆 [DAILY] Starting daily airdrop leaderboard calculation...');
 
     try {
+      // Check if snapshot already exists - if so, skip calculations to preserve frozen allocations
+      const existingSnapshotsCount =
+        await this.airdropService.airdropSnapshotRepository.count();
+
+      if (existingSnapshotsCount > 0) {
+        logger.log(
+          `⚠️ [DAILY] Found ${existingSnapshotsCount} existing snapshot(s) - skipping airdrop calculations to preserve frozen allocations`,
+        );
+        logger.log(
+          'ℹ️ [DAILY] Airdrop allocations are frozen after snapshot generation. Daily calculations will resume after snapshot is used/cleared.',
+        );
+        return;
+      }
+
+      logger.log(
+        '✅ [DAILY] No snapshots found - proceeding with airdrop calculations...',
+      );
       const startTime = Date.now();
 
       // Calculate airdrop for all eligible users (top 1111 by points)
@@ -178,6 +195,22 @@ export class DailyService {
     logger.log('🔧 [DAILY] Manual airdrop calculation triggered');
 
     try {
+      // Check if snapshot already exists - if so, warn but allow manual override
+      const existingSnapshotsCount =
+        await this.airdropService.airdropSnapshotRepository.count();
+
+      if (existingSnapshotsCount > 0) {
+        logger.warn(
+          `⚠️ [DAILY] WARNING: ${existingSnapshotsCount} existing snapshot(s) found!`,
+        );
+        logger.warn(
+          '⚠️ [DAILY] Manual calculation will proceed but may overwrite frozen allocations.',
+        );
+        logger.warn(
+          'ℹ️ [DAILY] Consider clearing snapshots first if this is intentional.',
+        );
+      }
+
       const result = await this.airdropService.calculateAirdropForAllUsers(10); // Smaller batch for manual trigger
       logger.log(
         '✅ [DAILY] Manual airdrop calculation completed successfully',

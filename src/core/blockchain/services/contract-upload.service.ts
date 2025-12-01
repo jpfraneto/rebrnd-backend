@@ -643,6 +643,13 @@ const CONTRACT_ABI = [
     stateMutability: 'nonpayable',
     type: 'function',
   },
+  {
+    inputs: [{ internalType: 'string', name: '', type: 'string' }],
+    name: 'handleExists',
+    outputs: [{ internalType: 'bool', name: '', type: 'bool' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
 ] as const;
 
 interface ContractBrand {
@@ -721,12 +728,23 @@ export class ContractUploadService {
 
       logger.log(`📋 [CONTRACT] Found ${brands.length} brands in database`);
 
-      // Transform to required format
-      const contractBrands: ContractBrand[] = brands.map((brand, index) => {
+      // Transform to required format and remove duplicates
+      const contractBrands: ContractBrand[] = [];
+      const seenHandles = new Set<string>();
+
+      brands.forEach((brand, index) => {
         // Use existing handle or name as fallback
         const handle =
           brand.onChainHandle ||
           brand.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        // Skip if we've already seen this handle
+        const handleLower = handle.toLowerCase();
+        if (seenHandles.has(handleLower)) {
+          logger.warn(`⚠️  [CONTRACT] Skipping duplicate handle "${handle}" (DB ID: ${brand.id})`);
+          return;
+        }
+        seenHandles.add(handleLower);
 
         // Generate metadata hash if missing
         const metadataHash =
@@ -738,17 +756,17 @@ export class ContractUploadService {
         // Use existing wallet or default
         const walletAddress = brand.walletAddress || this.DEFAULT_WALLET;
 
-        return {
+        contractBrands.push({
           id: brand.id,
           handle,
           metadataHash,
           fid,
           walletAddress,
-        };
+        });
       });
 
       logger.log(
-        `✅ [CONTRACT] Transformed ${contractBrands.length} brands for contract`,
+        `✅ [CONTRACT] Transformed ${contractBrands.length} unique brands for contract (removed ${brands.length - contractBrands.length} duplicates)`,
       );
       return contractBrands;
     } catch (error) {
@@ -784,7 +802,7 @@ export class ContractUploadService {
       // Check for duplicates
       const handleLower = brand.handle.toLowerCase();
       if (seenHandles.has(handleLower)) {
-        //issues.push(`Brand ${index + 1}: Duplicate handle "${brand.handle}"`);
+        issues.push(`Brand ${index + 1}: Duplicate handle "${brand.handle}"`);
       }
       seenHandles.add(handleLower);
 
@@ -1025,6 +1043,43 @@ export class ContractUploadService {
     }
   }
 
+  async checkIfBrandExistsOnContract(handle: string): Promise<boolean> {
+    try {
+      logger.log(`🔍 [CONTRACT] Checking handleExists("${handle}") on contract...`);
+      
+      const config = getConfig();
+
+      if (!process.env.BRND_SEASON_1_ADDRESS) {
+        throw new Error('BRND_SEASON_1_ADDRESS environment variable not set');
+      }
+
+      const publicClient = createPublicClient({
+        chain: base,
+        transport: http(config.blockchain.baseRpcUrl),
+      });
+
+      const contractAddress = process.env
+        .BRND_SEASON_1_ADDRESS as `0x${string}`;
+
+      logger.log(`🔍 [CONTRACT] Calling handleExists("${handle}") on contract ${contractAddress}`);
+
+      const exists = await publicClient.readContract({
+        address: contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: 'handleExists',
+        args: [handle],
+      } as any);
+
+      logger.log(`🔍 [CONTRACT] handleExists("${handle}") returned: ${exists}`);
+
+      return Boolean(exists);
+    } catch (error) {
+      logger.error(`Error checking if brand ${handle} exists on contract:`, error.message);
+      logger.error(error);
+      throw error;
+    }
+  }
+
   async getContractBrandCount(): Promise<number> {
     try {
       const config = getConfig();
@@ -1096,6 +1151,144 @@ export class ContractUploadService {
     } catch (error) {
       logger.error('Error getting uploaded brand count:', error);
       throw error;
+    }
+  }
+
+  async syncExistingBrandsFromContract(): Promise<{
+    checkedBrands: number;
+    markedAsUploaded: number;
+    brandHandles: string[];
+  }> {
+    try {
+      // Get all non-uploaded brands from database
+      const nonUploadedBrands = await this.brandRepository.find({
+        where: { isUploadedToContract: false },
+        select: ['id', 'name', 'onChainHandle'],
+      });
+
+      let markedCount = 0;
+      const markedHandles: string[] = [];
+      const brandIdsToMark: number[] = [];
+
+      logger.log(`🔍 [CONTRACT] Checking ${nonUploadedBrands.length} non-uploaded brands against contract`);
+
+      // Check each brand against the contract
+      for (const brand of nonUploadedBrands) {
+        const handle = brand.onChainHandle || brand.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        
+        logger.log(`🔍 [CONTRACT] Checking if brand "${handle}" (DB ID: ${brand.id}) exists on contract...`);
+        
+        try {
+          const existsOnContract = await this.checkIfBrandExistsOnContract(handle);
+          
+          if (existsOnContract) {
+            logger.log(`✅ [CONTRACT] Found existing brand on contract: ${handle} (DB ID: ${brand.id})`);
+            brandIdsToMark.push(brand.id);
+            markedHandles.push(handle);
+            markedCount++;
+          } else {
+            logger.log(`❌ [CONTRACT] Brand "${handle}" does NOT exist on contract (will need upload)`);
+          }
+        } catch (error) {
+          logger.error(`⚠️  [CONTRACT] Error checking brand ${handle}:`, error.message);
+          logger.error(error);
+          // Continue with next brand
+        }
+      }
+
+      logger.log(`🔍 [CONTRACT] Finished checking all brands. Found ${markedCount} existing brands to mark as uploaded.`);
+
+      // Mark found brands as uploaded in batches
+      if (brandIdsToMark.length > 0) {
+        await this.markBrandsAsUploaded(brandIdsToMark);
+        logger.log(`✅ [CONTRACT] Marked ${markedCount} existing brands as uploaded in database`);
+      }
+
+      return {
+        checkedBrands: nonUploadedBrands.length,
+        markedAsUploaded: markedCount,
+        brandHandles: markedHandles,
+      };
+    } catch (error) {
+      logger.error('Error syncing existing brands from contract:', error);
+      throw error;
+    }
+  }
+
+  async testUploadSingleBrand(handle: string): Promise<{
+    success: boolean;
+    error?: string;
+    txHash?: string;
+  }> {
+    try {
+      logger.log(`🧪 [CONTRACT] Testing upload of single brand: ${handle}`);
+      
+      const config = getConfig();
+
+      if (!process.env.ADMIN_PRIVATE_KEY) {
+        throw new Error('ADMIN_PRIVATE_KEY environment variable not set');
+      }
+
+      if (!process.env.BRND_SEASON_1_ADDRESS) {
+        throw new Error('BRND_SEASON_1_ADDRESS environment variable not set');
+      }
+
+      const privateKey = process.env.ADMIN_PRIVATE_KEY.startsWith('0x')
+        ? (process.env.ADMIN_PRIVATE_KEY as `0x${string}`)
+        : (`0x${process.env.ADMIN_PRIVATE_KEY}` as `0x${string}`);
+
+      const account = privateKeyToAccount(privateKey);
+
+      const publicClient = createPublicClient({
+        chain: base,
+        transport: http(config.blockchain.baseRpcUrl),
+      });
+
+      const walletClient = createWalletClient({
+        account,
+        chain: base,
+        transport: http(config.blockchain.baseRpcUrl),
+      });
+
+      const contractAddress = process.env
+        .BRND_SEASON_1_ADDRESS as `0x${string}`;
+
+      // Test individual brand upload
+      const testMetadataHash = this.generateMetadataHash(handle, 999);
+      const testFid = 99999;
+      const testWallet = this.DEFAULT_WALLET;
+
+      logger.log(`🧪 [CONTRACT] Attempting to upload: handle=${handle}, fid=${testFid}, wallet=${testWallet}`);
+
+      const hash = await walletClient.writeContract({
+        address: contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: 'batchCreateBrands',
+        args: [
+          [handle], 
+          [testMetadataHash], 
+          [BigInt(testFid)], 
+          [testWallet as `0x${string}`]
+        ],
+      } as any);
+
+      // Wait for confirmation
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash,
+      });
+
+      logger.log(`✅ [CONTRACT] Successfully uploaded test brand ${handle}: ${receipt.transactionHash}`);
+
+      return {
+        success: true,
+        txHash: receipt.transactionHash,
+      };
+    } catch (error) {
+      logger.error(`❌ [CONTRACT] Failed to upload test brand ${handle}:`, error.message);
+      return {
+        success: false,
+        error: error.message,
+      };
     }
   }
 

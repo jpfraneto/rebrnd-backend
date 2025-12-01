@@ -753,6 +753,143 @@ async function migrateData() {
       `);
       console.log('    ✓ Updated favoriteBrandId (using simpler query)');
 
+      // Step 7d: Calculate maxDailyStreak and dailyStreak
+      // We'll use a stored procedure approach or calculate in batches
+      // For now, let's use a simpler approach: calculate for each user individually
+      console.log('  7d. Calculating daily streak and max daily streak...');
+
+      // Get all users who have votes
+      const usersWithVotes = await queryRunner.query(`
+        SELECT DISTINCT userId as id
+        FROM user_brand_votes
+      `);
+
+      let updatedCount = 0;
+      const batchSize = 100;
+
+      for (let i = 0; i < usersWithVotes.length; i += batchSize) {
+        const batch = usersWithVotes.slice(i, i + batchSize);
+
+        for (const user of batch) {
+          // Get unique voting days for this user (UTC days)
+          const voteDays = await queryRunner.query(
+            `
+            SELECT DISTINCT 
+              DATE(CONVERT_TZ(date, @@session.time_zone, '+00:00')) as vote_date
+            FROM user_brand_votes
+            WHERE userId = ?
+            ORDER BY vote_date ASC
+          `,
+            [user.id],
+          );
+
+          if (voteDays.length === 0) {
+            await queryRunner.query(
+              `
+              UPDATE users 
+              SET dailyStreak = 0, maxDailyStreak = 0
+              WHERE id = ?
+            `,
+              [user.id],
+            );
+            continue;
+          }
+
+          // Helper to parse date string to UTC date (handles both Date objects and strings)
+          const parseUTCDate = (dateValue: any): Date => {
+            const date =
+              dateValue instanceof Date ? dateValue : new Date(dateValue);
+            // Ensure it's treated as UTC
+            return new Date(
+              Date.UTC(
+                date.getUTCFullYear(),
+                date.getUTCMonth(),
+                date.getUTCDate(),
+              ),
+            );
+          };
+
+          // Calculate maxDailyStreak: find maximum consecutive days
+          let maxStreak = 1;
+          let currentStreak = 1;
+
+          for (let j = 1; j < voteDays.length; j++) {
+            const currentDate = parseUTCDate(voteDays[j].vote_date);
+            const prevDate = parseUTCDate(voteDays[j - 1].vote_date);
+            const daysDiff = Math.floor(
+              (currentDate.getTime() - prevDate.getTime()) /
+                (1000 * 60 * 60 * 24),
+            );
+
+            if (daysDiff === 1) {
+              // Consecutive day
+              currentStreak++;
+            } else {
+              // Gap found, update max and reset
+              maxStreak = Math.max(maxStreak, currentStreak);
+              currentStreak = 1;
+            }
+          }
+          maxStreak = Math.max(maxStreak, currentStreak);
+
+          // Calculate dailyStreak: consecutive days from most recent vote
+          // Most recent vote day (UTC)
+          const mostRecentDate = parseUTCDate(
+            voteDays[voteDays.length - 1].vote_date,
+          );
+          const today = new Date();
+          today.setUTCHours(0, 0, 0, 0);
+
+          const daysSinceLastVote = Math.floor(
+            (today.getTime() - mostRecentDate.getTime()) /
+              (1000 * 60 * 60 * 24),
+          );
+
+          let dailyStreak = 0;
+          if (daysSinceLastVote <= 1) {
+            // Count consecutive days backwards from most recent
+            dailyStreak = 1;
+            let expectedDate = new Date(mostRecentDate);
+
+            for (let j = voteDays.length - 2; j >= 0; j--) {
+              const voteDate = parseUTCDate(voteDays[j].vote_date);
+              expectedDate.setUTCDate(expectedDate.getUTCDate() - 1);
+
+              if (voteDate.getTime() === expectedDate.getTime()) {
+                dailyStreak++;
+              } else {
+                break;
+              }
+            }
+          }
+
+          // Update user with calculated values
+          await queryRunner.query(
+            `
+            UPDATE users 
+            SET dailyStreak = ?, maxDailyStreak = ?
+            WHERE id = ?
+          `,
+            [dailyStreak, maxStreak, user.id],
+          );
+
+          updatedCount++;
+        }
+
+        if (
+          (i + batchSize) % 1000 === 0 ||
+          i + batchSize >= usersWithVotes.length
+        ) {
+          console.log(
+            `    Processed ${Math.min(i + batchSize, usersWithVotes.length)}/${usersWithVotes.length} users...`,
+          );
+        }
+      }
+
+      console.log(
+        `    ✓ Updated dailyStreak and maxDailyStreak for ${updatedCount} users`,
+      );
+
       await queryRunner.release();
       console.log('  ✓ All user calculated fields updated successfully');
     } catch (error: any) {
