@@ -55,59 +55,59 @@ export class NeynarNotificationService {
    * Sends evening reminder only to users who haven't voted today
    * Requires checking against today's votes before sending
    */
-  async sendEveningReminderToNonVoters(): Promise<void> {
-    try {
-      this.logger.log("Sending evening reminders to users who haven't voted");
+  // async sendEveningReminderToNonVoters(): Promise<void> {
+  //   try {
+  //     this.logger.log("Sending evening reminders to users who haven't voted");
 
-      const today = new Date().toISOString().split('T')[0];
-      // Create date range for better performance (avoids DATE() function)
-      const startOfDay = new Date(today + ' 00:00:00');
-      const endOfDay = new Date(today + ' 23:59:59');
+  //     const today = new Date().toISOString().split('T')[0];
+  //     // Create date range for better performance (avoids DATE() function)
+  //     const startOfDay = new Date(today + ' 00:00:00');
+  //     const endOfDay = new Date(today + ' 23:59:59');
 
-      // Find users who haven't voted today - optimized query
-      const usersWhoHaventVoted = await this.userRepository
-        .createQueryBuilder('user')
-        .leftJoin(
-          'user.userBrandVotes',
-          'vote',
-          'vote.date >= :startOfDay AND vote.date <= :endOfDay',
-          {
-            startOfDay,
-            endOfDay,
-          },
-        )
-        .where('vote.transactionHash IS NULL') // No vote today
-        .select(['user.fid'])
-        .getMany();
+  //     // Find users who haven't voted today - optimized query
+  //     const usersWhoHaventVoted = await this.userRepository
+  //       .createQueryBuilder('user')
+  //       .leftJoin(
+  //         'user.userBrandVotes',
+  //         'vote',
+  //         'vote.date >= :startOfDay AND vote.date <= :endOfDay',
+  //         {
+  //           startOfDay,
+  //           endOfDay,
+  //         },
+  //       )
+  //       .where('vote.transactionHash IS NULL') // No vote today
+  //       .select(['user.fid'])
+  //       .getMany();
 
-      if (usersWhoHaventVoted.length === 0) {
-        this.logger.log(
-          'No users need evening reminders - everyone has voted!',
-        );
-        return;
-      }
+  //     if (usersWhoHaventVoted.length === 0) {
+  //       this.logger.log(
+  //         'No users need evening reminders - everyone has voted!',
+  //       );
+  //       return;
+  //     }
 
-      const targetFids = usersWhoHaventVoted.map((user) => user.fid);
+  //     const targetFids = usersWhoHaventVoted.map((user) => user.fid);
 
-      const notification = {
-        title: '⏰ Last Call to Vote!',
-        body: "Don't miss out! Vote for your favorite brands before day ends.",
-        target_url: 'https://brnd.land',
-      };
+  //     const notification = {
+  //       title: '⏰ Last Call to Vote!',
+  //       body: "Don't miss out! Vote for your favorite brands before day ends.",
+  //       target_url: 'https://brnd.land',
+  //     };
 
-      const response = await this.neynarClient.publishFrameNotifications({
-        targetFids,
-        notification,
-      });
+  //     const response = await this.neynarClient.publishFrameNotifications({
+  //       targetFids,
+  //       notification,
+  //     });
 
-      this.logger.log(`Evening reminders sent successfully:`, {
-        targetedUsers: targetFids.length,
-        response,
-      });
-    } catch (error) {
-      this.logger.error('Failed to send evening reminders:', error);
-    }
-  }
+  //     this.logger.log(`Evening reminders sent successfully:`, {
+  //       targetedUsers: targetFids.length,
+  //       response,
+  //     });
+  //   } catch (error) {
+  //     this.logger.error('Failed to send evening reminders:', error);
+  //   }
+  // }
 
   /**
    * Health check for the notification service
