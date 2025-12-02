@@ -140,6 +140,11 @@ export class User {
   })
   lastVoteReminderSent: Date;
 
+  @Column({
+    default: 0.0,
+  })
+  neynarScore: number;
+
   @OneToMany('UserBrandVotes', 'user')
   userBrandVotes: any[];
 }

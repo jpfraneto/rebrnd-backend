@@ -68,6 +68,7 @@ export class IndexerService {
           powerups: 0,
           points: 0,
           verified: false,
+          neynarScore: 0.0,
           createdAt: voteDate,
           updatedAt: voteDate,
         });
@@ -243,7 +244,7 @@ export class IndexerService {
 
       // Then update calculated fields (which depend on the updated totalVotes)
       await this.userService.updateUserCalculatedFields(user.id);
-      
+
       // Calculate leaderboard points based on BRND power level
       // Level 0 -> 3, Level 1 -> 6, Level 2 -> 9, etc.
       // Formula: (level + 1) * 3
@@ -429,7 +430,9 @@ export class IndexerService {
           },
         );
 
-        logger.log(`✅ [INDEXER] Updated UserBrandVotes: ${userVote.transactionHash}`);
+        logger.log(
+          `✅ [INDEXER] Updated UserBrandVotes: ${userVote.transactionHash}`,
+        );
       } else {
         // This shouldn't normally happen - claim should come after vote
         // But create a placeholder record just in case
@@ -452,6 +455,7 @@ export class IndexerService {
             powerups: 0,
             points: 0,
             verified: false,
+            neynarScore: 0.0,
             createdAt: claimDate,
             updatedAt: claimDate,
           });
@@ -531,6 +535,7 @@ export class IndexerService {
           points: 0,
           verified: false,
           brndPowerLevel: levelUpData.brndPowerLevel,
+          neynarScore: 0.0,
           createdAt: levelUpDate,
           updatedAt: levelUpDate,
         });

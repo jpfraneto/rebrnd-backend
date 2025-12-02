@@ -45,7 +45,7 @@ import {
         RewardClaim,
       ],
       // Important: Set synchronize to false in production for safety
-      synchronize: false, // Disabled due to existing database index conflicts
+      synchronize: true, // Enabled to automatically sync schema changes
       //synchronize: !getConfig().isProduction,
       logging: false,
       // SSL configuration for DigitalOcean managed database

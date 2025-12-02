@@ -20,7 +20,7 @@ export class NeynarNotificationService {
     if (!process.env.NEYNAR_API_KEY) {
       throw new Error('NEYNAR_API_KEY is required for notification service');
     }
-    
+
     this.neynarClient = new NeynarAPIClient({
       apiKey: process.env.NEYNAR_API_KEY,
     });
@@ -30,26 +30,26 @@ export class NeynarNotificationService {
    * Sends daily vote reminder to all users at start of UTC day
    * Simple broadcast to all users who have the miniapp added
    */
-  async sendDailyVoteReminder(): Promise<void> {
-    try {
-      this.logger.log('Sending daily vote reminder notification');
+  // async sendDailyVoteReminder(): Promise<void> {
+  //   try {
+  //     this.logger.log('Sending daily vote reminder notification');
 
-      const notification = {
-        title: '🗳️ Daily Vote Time!',
-        body: 'New day, new votes! Choose your top 3 brands and earn points.',
-        target_url: 'https://brnd.land',
-      };
+  //     const notification = {
+  //       title: '🗳️ Daily Vote Time!',
+  //       body: 'New day, new votes! Choose your top 3 brands and earn points.',
+  //       target_url: 'https://brnd.land',
+  //     };
 
-      const response = await this.neynarClient.publishFrameNotifications({
-        targetFids: [], // Empty array targets all users with notifications enabled
-        notification,
-      });
+  //     // const response = await this.neynarClient.publishFrameNotifications({
+  //     //   targetFids: [], // Empty array targets all users with notifications enabled
+  //     //   notification,
+  //     // });
 
-      this.logger.log(`Daily reminder sent successfully:`, response);
-    } catch (error) {
-      this.logger.error('Failed to send daily vote reminder:', error);
-    }
-  }
+  //     this.logger.log(`Daily reminder sent successfully:`, response);
+  //   } catch (error) {
+  //     this.logger.error('Failed to send daily vote reminder:', error);
+  //   }
+  // }
 
   /**
    * Sends evening reminder only to users who haven't voted today
@@ -57,7 +57,7 @@ export class NeynarNotificationService {
    */
   async sendEveningReminderToNonVoters(): Promise<void> {
     try {
-      this.logger.log('Sending evening reminders to users who haven\'t voted');
+      this.logger.log("Sending evening reminders to users who haven't voted");
 
       const today = new Date().toISOString().split('T')[0];
       // Create date range for better performance (avoids DATE() function)
@@ -67,25 +67,31 @@ export class NeynarNotificationService {
       // Find users who haven't voted today - optimized query
       const usersWhoHaventVoted = await this.userRepository
         .createQueryBuilder('user')
-        .leftJoin('user.userBrandVotes', 'vote', 
-          'vote.date >= :startOfDay AND vote.date <= :endOfDay', {
-          startOfDay,
-          endOfDay,
-        })
+        .leftJoin(
+          'user.userBrandVotes',
+          'vote',
+          'vote.date >= :startOfDay AND vote.date <= :endOfDay',
+          {
+            startOfDay,
+            endOfDay,
+          },
+        )
         .where('vote.transactionHash IS NULL') // No vote today
         .select(['user.fid'])
         .getMany();
 
       if (usersWhoHaventVoted.length === 0) {
-        this.logger.log('No users need evening reminders - everyone has voted!');
+        this.logger.log(
+          'No users need evening reminders - everyone has voted!',
+        );
         return;
       }
 
-      const targetFids = usersWhoHaventVoted.map(user => user.fid);
+      const targetFids = usersWhoHaventVoted.map((user) => user.fid);
 
       const notification = {
         title: '⏰ Last Call to Vote!',
-        body: 'Don\'t miss out! Vote for your favorite brands before day ends.',
+        body: "Don't miss out! Vote for your favorite brands before day ends.",
         target_url: 'https://brnd.land',
       };
 

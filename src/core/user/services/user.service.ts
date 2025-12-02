@@ -16,6 +16,7 @@ import {
 } from '../../../models';
 import { logger } from 'src/main';
 import { AirdropContractService } from '../../airdrop/services/airdrop-contract.service';
+import { getConfig } from '../../../security/config';
 
 /**
  * Interface for leaderboard response with user position info
@@ -1362,6 +1363,7 @@ export class UserService {
           'dailyStreak',
           'totalPodiums',
           'votedBrandsCount',
+          'neynarScore',
         ],
       });
 
@@ -1383,6 +1385,37 @@ export class UserService {
           }
         : null;
 
+      // Fetch Neynar score if not set
+      let neynarScore = user.neynarScore;
+      if (neynarScore === 0.0) {
+        try {
+          logger.log(`🔍 [USER PROFILE] Fetching Neynar score for FID: ${fid}`);
+          const neynarUserInfo = await this.getNeynarUserInfo(fid);
+
+          if (neynarUserInfo) {
+            // Calculate score: 1.0 if has power badge, 0.8 otherwise
+            neynarScore = neynarUserInfo.power_badge ? 1.0 : 0.8;
+
+            // Update user record with the calculated score
+            await this.userRepository.update({ id: user.id }, { neynarScore });
+
+            logger.log(
+              `✅ [USER PROFILE] Updated Neynar score for FID ${fid}: ${neynarScore}`,
+            );
+          } else {
+            logger.warn(
+              `⚠️ [USER PROFILE] Could not fetch Neynar info for FID: ${fid}`,
+            );
+          }
+        } catch (error) {
+          logger.error(
+            `❌ [USER PROFILE] Error fetching Neynar score for FID ${fid}:`,
+            error,
+          );
+          // Continue with 0.0 if fetch fails
+        }
+      }
+
       return {
         leaderboardPosition,
         currentPoints: user.points,
@@ -1390,11 +1423,42 @@ export class UserService {
         totalPodiums: user.totalPodiums,
         favoriteBrand,
         votedBrands: user.votedBrandsCount,
-        neynarScore: 0.9, // Placeholder for now, as requested
+        neynarScore,
       };
     } catch (error) {
       logger.error('Error getting user profile:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Fetches user info from Neynar API
+   */
+  private async getNeynarUserInfo(fid: number): Promise<any> {
+    try {
+      const apiKey = getConfig().neynar.apiKey.replace(/&$/, '');
+
+      const response = await fetch(
+        `https://api.neynar.com/v2/farcaster/user/bulk?fids=${fid}`,
+        {
+          headers: {
+            accept: 'application/json',
+            api_key: apiKey,
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Neynar API error: ${response.status} ${response.statusText}`,
+        );
+      }
+
+      const data = await response.json();
+      return data?.users?.[0] || null;
+    } catch (error) {
+      logger.error('Error fetching Neynar user info:', error);
+      return null;
     }
   }
 }
