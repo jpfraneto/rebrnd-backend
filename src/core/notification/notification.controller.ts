@@ -22,7 +22,7 @@ export class NotificationController {
   async healthCheck(@Res() res: Response): Promise<Response> {
     try {
       const health = await this.neynarNotificationService.healthCheck();
-      
+
       return hasResponse(res, {
         ...health,
         timestamp: new Date().toISOString(),
@@ -42,60 +42,60 @@ export class NotificationController {
   /**
    * Manual trigger for daily reminders - development environment only
    */
-  @Post('/dev/trigger-daily-reminder')
-  async triggerDailyReminder(@Res() res: Response): Promise<Response> {
-    try {
-      if (process.env.ENV === 'prod') {
-        return hasError(
-          res,
-          HttpStatus.FORBIDDEN,
-          'triggerDailyReminder',
-          'Development endpoint not available in production',
-        );
-      }
+  // @Post('/dev/trigger-daily-reminder')
+  // async triggerDailyReminder(@Res() res: Response): Promise<Response> {
+  //   try {
+  //     if (process.env.ENV === 'prod') {
+  //       return hasError(
+  //         res,
+  //         HttpStatus.FORBIDDEN,
+  //         'triggerDailyReminder',
+  //         'Development endpoint not available in production',
+  //       );
+  //     }
 
-      await this.neynarNotificationService.sendDailyVoteReminder();
-      return hasResponse(res, {
-        message: 'Daily reminder sent successfully via Neynar',
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      return hasError(
-        res,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-        'triggerDailyReminder',
-        error.message,
-      );
-    }
-  }
+  //     await this.neynarNotificationService.sendDailyVoteReminder();
+  //     return hasResponse(res, {
+  //       message: 'Daily reminder sent successfully via Neynar',
+  //       timestamp: new Date().toISOString(),
+  //     });
+  //   } catch (error) {
+  //     return hasError(
+  //       res,
+  //       HttpStatus.INTERNAL_SERVER_ERROR,
+  //       'triggerDailyReminder',
+  //       error.message,
+  //     );
+  //   }
+  // }
 
   /**
    * Manual trigger for evening reminders - development environment only
    */
-  @Post('/dev/trigger-evening-reminder')
-  async triggerEveningReminder(@Res() res: Response): Promise<Response> {
-    try {
-      if (process.env.ENV === 'prod') {
-        return hasError(
-          res,
-          HttpStatus.FORBIDDEN,
-          'triggerEveningReminder',
-          'Development endpoint not available in production',
-        );
-      }
+  // @Post('/dev/trigger-evening-reminder')
+  // async triggerEveningReminder(@Res() res: Response): Promise<Response> {
+  //   try {
+  //     if (process.env.ENV === 'prod') {
+  //       return hasError(
+  //         res,
+  //         HttpStatus.FORBIDDEN,
+  //         'triggerEveningReminder',
+  //         'Development endpoint not available in production',
+  //       );
+  //     }
 
-      await this.neynarNotificationService.sendEveningReminderToNonVoters();
-      return hasResponse(res, {
-        message: 'Evening reminder sent successfully via Neynar',
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      return hasError(
-        res,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-        'triggerEveningReminder',
-        error.message,
-      );
-    }
-  }
+  //     await this.neynarNotificationService.sendEveningReminderToNonVoters();
+  //     return hasResponse(res, {
+  //       message: 'Evening reminder sent successfully via Neynar',
+  //       timestamp: new Date().toISOString(),
+  //     });
+  //   } catch (error) {
+  //     return hasError(
+  //       res,
+  //       HttpStatus.INTERNAL_SERVER_ERROR,
+  //       'triggerEveningReminder',
+  //       error.message,
+  //     );
+  //   }
+  // }
 }
