@@ -777,9 +777,7 @@ export class AirdropService {
     try {
       console.log(`🎨 [COLLECTIBLES] Checking collectibles for FID: ${fid}`);
 
-      // TODO: Implement collectibles checking logic
-      // This would involve checking for collected BRND casts
-      const collectiblesCount = 0;
+      const collectiblesCount = await this.getCollectiblesCount(fid);
 
       let multiplier = 1.0;
       let tier = 'No collectibles';
@@ -799,7 +797,7 @@ export class AirdropService {
         collectiblesCount,
         multiplier,
         tier,
-        logic: `Collected ${collectiblesCount} BRND cast collectibles`,
+        logic: `Collected ${collectiblesCount} BRND cast collectibles from FIDs 1341847 and 1108951`,
       });
 
       return { multiplier, collectiblesCount };
@@ -1419,6 +1417,53 @@ export class AirdropService {
     console.log(`🧮 [MULTIPLIERS] Parallel multiplier calculation complete!`);
 
     return { multipliers, challenges };
+  }
+
+  private async getCollectiblesCount(fid: number): Promise<number> {
+    try {
+      console.log(`🎨 [COLLECTIBLES] Getting collectibles count for FID: ${fid}`);
+
+      const config = getConfig();
+      const indexerUrl = config.collectiblesIndexer?.apiRoute;
+      const apiKey = config.collectiblesIndexer?.apiKey;
+
+      if (!indexerUrl || !apiKey) {
+        console.warn(`⚠️  [COLLECTIBLES] Missing indexer configuration. Returning 0 collectibles.`);
+        return 0;
+      }
+
+      // Query collectibles from specific creator FIDs: 1341847 and 1108951
+      const collectedFids = '1341847,1108951';
+      const url = `${indexerUrl}/brnd-airdrop/collected-casts?collectorFid=${fid}&collectedFids=${collectedFids}`;
+
+      console.log(`🔍 [COLLECTIBLES] Fetching from: ${url}`);
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'X-API-KEY': apiKey,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        console.error(`❌ [COLLECTIBLES] API error: ${response.status} ${response.statusText}`);
+        return 0;
+      }
+
+      const data = await response.json();
+      const collectiblesCount = data?.count || 0;
+
+      console.log(`✅ [COLLECTIBLES] Found ${collectiblesCount} collectibles for FID: ${fid}`, {
+        collectedCasts: data?.collectedCasts?.length || 0,
+        creatorFids: collectedFids,
+      });
+
+      return collectiblesCount;
+    } catch (error) {
+      console.error('❌ [COLLECTIBLES] Error fetching collectibles count:', error);
+      return 0;
+    }
   }
 
   private async getVotedBrandsCount(fid: number): Promise<number> {

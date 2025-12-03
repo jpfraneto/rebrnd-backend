@@ -58,6 +58,10 @@ export const getConfig = () => ({
       '0x19d1872d8328b23a219e11d3d6eeee1954a88f88',
     airdropContractAddress: process.env.AIRDROP_CONTRACT_ADDRESS,
   },
+  collectiblesIndexer: {
+    apiRoute: process.env.COLLECTIBLES_INDEXER_API_ROUTE,
+    apiKey: process.env.COLLECTIBLES_INDEXER_API_KEY,
+  },
   notifications: {
     enabled: false,
     baseUrl: process.env.NOTIFICATION_BASE_URL || 'https://brnd.land',
