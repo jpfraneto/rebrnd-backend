@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, Not, In } from 'typeorm';
 import {
   AirdropScore,
   AirdropSnapshot,
@@ -1421,14 +1421,18 @@ export class AirdropService {
 
   private async getCollectiblesCount(fid: number): Promise<number> {
     try {
-      console.log(`🎨 [COLLECTIBLES] Getting collectibles count for FID: ${fid}`);
+      console.log(
+        `🎨 [COLLECTIBLES] Getting collectibles count for FID: ${fid}`,
+      );
 
       const config = getConfig();
       const indexerUrl = config.collectiblesIndexer?.apiRoute;
       const apiKey = config.collectiblesIndexer?.apiKey;
 
       if (!indexerUrl || !apiKey) {
-        console.warn(`⚠️  [COLLECTIBLES] Missing indexer configuration. Returning 0 collectibles.`);
+        console.warn(
+          `⚠️  [COLLECTIBLES] Missing indexer configuration. Returning 0 collectibles.`,
+        );
         return 0;
       }
 
@@ -1447,21 +1451,29 @@ export class AirdropService {
       });
 
       if (!response.ok) {
-        console.error(`❌ [COLLECTIBLES] API error: ${response.status} ${response.statusText}`);
+        console.error(
+          `❌ [COLLECTIBLES] API error: ${response.status} ${response.statusText}`,
+        );
         return 0;
       }
 
       const data = await response.json();
       const collectiblesCount = data?.count || 0;
 
-      console.log(`✅ [COLLECTIBLES] Found ${collectiblesCount} collectibles for FID: ${fid}`, {
-        collectedCasts: data?.collectedCasts?.length || 0,
-        creatorFids: collectedFids,
-      });
+      console.log(
+        `✅ [COLLECTIBLES] Found ${collectiblesCount} collectibles for FID: ${fid}`,
+        {
+          collectedCasts: data?.collectedCasts?.length || 0,
+          creatorFids: collectedFids,
+        },
+      );
 
       return collectiblesCount;
     } catch (error) {
-      console.error('❌ [COLLECTIBLES] Error fetching collectibles count:', error);
+      console.error(
+        '❌ [COLLECTIBLES] Error fetching collectibles count:',
+        error,
+      );
       return 0;
     }
   }
@@ -1848,7 +1860,9 @@ export class AirdropService {
     );
 
     // Update token allocations for all users using BULK SQL operation
-    console.log(`💰 [TOKEN RECALC] Starting BULK update for ${airdropScores.length} user allocations...`);
+    console.log(
+      `💰 [TOKEN RECALC] Starting BULK update for ${airdropScores.length} user allocations...`,
+    );
     let totalTokensAllocated = 0;
     const BRND_USD_PRICE = 0.000001365;
     const distributionStats = {
@@ -1864,7 +1878,7 @@ export class AirdropService {
     const fidList: number[] = [];
     const tokenAllocationCases: string[] = [];
     const percentageCases: string[] = [];
-    
+
     console.log(`🔢 [TOKEN RECALC] Calculating allocations for all users...`);
     for (const score of airdropScores) {
       const finalScore = Number(score.finalScore);
@@ -1891,7 +1905,7 @@ export class AirdropService {
       fidList.push(score.fid);
       tokenAllocationCases.push(`WHEN ${score.fid} THEN ${tokenAllocation}`);
       percentageCases.push(`WHEN ${score.fid} THEN ${percentage}`);
-      
+
       totalTokensAllocated += tokenAllocation;
 
       // Categorize by USD value
@@ -1904,14 +1918,16 @@ export class AirdropService {
     }
 
     // Execute BULK update using raw SQL with CASE statements
-    console.log(`🚀 [TOKEN RECALC] Executing BULK SQL update for ${fidList.length} users...`);
+    console.log(
+      `🚀 [TOKEN RECALC] Executing BULK SQL update for ${fidList.length} users...`,
+    );
     const updateStartTime = Date.now();
-    
+
     try {
       // Get the correct table name from TypeORM metadata
       const tableName = this.airdropScoreRepository.metadata.tableName;
       console.log(`📋 [TOKEN RECALC] Using table name: ${tableName}`);
-      
+
       const sql = `
         UPDATE ${tableName} 
         SET 
@@ -1920,16 +1936,22 @@ export class AirdropService {
           updatedAt = NOW()
         WHERE fid IN (${fidList.join(',')})
       `;
-      
+
       const result = await this.airdropScoreRepository.query(sql);
       const updateDuration = Date.now() - updateStartTime;
-      
-      console.log(`✅ [TOKEN RECALC] BULK update completed in ${updateDuration}ms!`);
-      console.log(`📊 [TOKEN RECALC] Updated ${fidList.length} users in a single query`);
-      
+
+      console.log(
+        `✅ [TOKEN RECALC] BULK update completed in ${updateDuration}ms!`,
+      );
+      console.log(
+        `📊 [TOKEN RECALC] Updated ${fidList.length} users in a single query`,
+      );
     } catch (error) {
       console.error(`❌ [TOKEN RECALC] BULK update failed:`, error);
-      console.error(`🔍 [TOKEN RECALC] SQL that failed:`, error.sql?.substring(0, 500) + '...');
+      console.error(
+        `🔍 [TOKEN RECALC] SQL that failed:`,
+        error.sql?.substring(0, 500) + '...',
+      );
       throw error;
     }
 
@@ -2698,6 +2720,9 @@ export class AirdropService {
     );
     const users = await this.userRepository.find({
       select: ['fid', 'username', 'points', 'id'],
+      where: {
+        fid: Not(In([5431, 6099, 8109, 222144, 16098])),
+      },
       order: { points: 'DESC' },
       take: this.TOP_USERS, // 1111
     });
@@ -2854,21 +2879,32 @@ export class AirdropService {
     // STEP 6: Recalculate token distributions (only if no snapshot exists yet)
     console.log(`🔍 [BULK AIRDROP] STEP 6: Checking for existing snapshots...`);
     const existingSnapshotsCount = await this.airdropSnapshotRepository.count();
-    
+
     if (existingSnapshotsCount === 0) {
-      console.log(`🔄 [BULK AIRDROP] No snapshots found - recalculating token distributions...`);
+      console.log(
+        `🔄 [BULK AIRDROP] No snapshots found - recalculating token distributions...`,
+      );
       try {
         const tokenDistribution = await this.recalculateTokenDistribution();
-        console.log(`✅ [BULK AIRDROP] Token distribution recalculated successfully!`, {
-          totalUsers: tokenDistribution.totalUsers,
-          totalTokensAllocated: tokenDistribution.totalTokensAllocated.toLocaleString(),
-        });
+        console.log(
+          `✅ [BULK AIRDROP] Token distribution recalculated successfully!`,
+          {
+            totalUsers: tokenDistribution.totalUsers,
+            totalTokensAllocated:
+              tokenDistribution.totalTokensAllocated.toLocaleString(),
+          },
+        );
       } catch (error) {
-        console.error(`❌ [BULK AIRDROP] Failed to recalculate token distribution:`, error);
+        console.error(
+          `❌ [BULK AIRDROP] Failed to recalculate token distribution:`,
+          error,
+        );
         // Don't throw - allow the function to continue and return results
       }
     } else {
-      console.log(`⚠️ [BULK AIRDROP] ${existingSnapshotsCount} snapshot(s) exist - skipping token recalculation to preserve frozen allocations`);
+      console.log(
+        `⚠️ [BULK AIRDROP] ${existingSnapshotsCount} snapshot(s) exist - skipping token recalculation to preserve frozen allocations`,
+      );
     }
 
     return {
