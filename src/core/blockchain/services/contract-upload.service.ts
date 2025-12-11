@@ -741,7 +741,9 @@ export class ContractUploadService {
         // Skip if we've already seen this handle
         const handleLower = handle.toLowerCase();
         if (seenHandles.has(handleLower)) {
-          logger.warn(`⚠️  [CONTRACT] Skipping duplicate handle "${handle}" (DB ID: ${brand.id})`);
+          logger.warn(
+            `⚠️  [CONTRACT] Skipping duplicate handle "${handle}" (DB ID: ${brand.id})`,
+          );
           return;
         }
         seenHandles.add(handleLower);
@@ -929,7 +931,9 @@ export class ContractUploadService {
       logger.log(`📋 [CONTRACT] Contract address: ${contractAddress}`);
 
       // Initialize nonce management - will fetch fresh for each transaction
-      logger.log(`🔢 [CONTRACT] Using dynamic nonce management for reliability`);
+      logger.log(
+        `🔢 [CONTRACT] Using dynamic nonce management for reliability`,
+      );
 
       // Process in batches
       for (let i = 0; i < brands.length; i += this.BATCH_SIZE) {
@@ -1045,8 +1049,10 @@ export class ContractUploadService {
 
   async checkIfBrandExistsOnContract(handle: string): Promise<boolean> {
     try {
-      logger.log(`🔍 [CONTRACT] Checking handleExists("${handle}") on contract...`);
-      
+      logger.log(
+        `🔍 [CONTRACT] Checking handleExists("${handle}") on contract...`,
+      );
+
       const config = getConfig();
 
       if (!process.env.BRND_SEASON_1_ADDRESS) {
@@ -1061,7 +1067,9 @@ export class ContractUploadService {
       const contractAddress = process.env
         .BRND_SEASON_1_ADDRESS as `0x${string}`;
 
-      logger.log(`🔍 [CONTRACT] Calling handleExists("${handle}") on contract ${contractAddress}`);
+      logger.log(
+        `🔍 [CONTRACT] Calling handleExists("${handle}") on contract ${contractAddress}`,
+      );
 
       const exists = await publicClient.readContract({
         address: contractAddress,
@@ -1074,7 +1082,10 @@ export class ContractUploadService {
 
       return Boolean(exists);
     } catch (error) {
-      logger.error(`Error checking if brand ${handle} exists on contract:`, error.message);
+      logger.error(
+        `Error checking if brand ${handle} exists on contract:`,
+        error.message,
+      );
       logger.error(error);
       throw error;
     }
@@ -1170,38 +1181,56 @@ export class ContractUploadService {
       const markedHandles: string[] = [];
       const brandIdsToMark: number[] = [];
 
-      logger.log(`🔍 [CONTRACT] Checking ${nonUploadedBrands.length} non-uploaded brands against contract`);
+      logger.log(
+        `🔍 [CONTRACT] Checking ${nonUploadedBrands.length} non-uploaded brands against contract`,
+      );
 
       // Check each brand against the contract
       for (const brand of nonUploadedBrands) {
-        const handle = brand.onChainHandle || brand.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        
-        logger.log(`🔍 [CONTRACT] Checking if brand "${handle}" (DB ID: ${brand.id}) exists on contract...`);
-        
+        const handle =
+          brand.onChainHandle ||
+          brand.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        logger.log(
+          `🔍 [CONTRACT] Checking if brand "${handle}" (DB ID: ${brand.id}) exists on contract...`,
+        );
+
         try {
-          const existsOnContract = await this.checkIfBrandExistsOnContract(handle);
-          
+          const existsOnContract =
+            await this.checkIfBrandExistsOnContract(handle);
+
           if (existsOnContract) {
-            logger.log(`✅ [CONTRACT] Found existing brand on contract: ${handle} (DB ID: ${brand.id})`);
+            logger.log(
+              `✅ [CONTRACT] Found existing brand on contract: ${handle} (DB ID: ${brand.id})`,
+            );
             brandIdsToMark.push(brand.id);
             markedHandles.push(handle);
             markedCount++;
           } else {
-            logger.log(`❌ [CONTRACT] Brand "${handle}" does NOT exist on contract (will need upload)`);
+            logger.log(
+              `❌ [CONTRACT] Brand "${handle}" does NOT exist on contract (will need upload)`,
+            );
           }
         } catch (error) {
-          logger.error(`⚠️  [CONTRACT] Error checking brand ${handle}:`, error.message);
+          logger.error(
+            `⚠️  [CONTRACT] Error checking brand ${handle}:`,
+            error.message,
+          );
           logger.error(error);
           // Continue with next brand
         }
       }
 
-      logger.log(`🔍 [CONTRACT] Finished checking all brands. Found ${markedCount} existing brands to mark as uploaded.`);
+      logger.log(
+        `🔍 [CONTRACT] Finished checking all brands. Found ${markedCount} existing brands to mark as uploaded.`,
+      );
 
       // Mark found brands as uploaded in batches
       if (brandIdsToMark.length > 0) {
         await this.markBrandsAsUploaded(brandIdsToMark);
-        logger.log(`✅ [CONTRACT] Marked ${markedCount} existing brands as uploaded in database`);
+        logger.log(
+          `✅ [CONTRACT] Marked ${markedCount} existing brands as uploaded in database`,
+        );
       }
 
       return {
@@ -1222,7 +1251,7 @@ export class ContractUploadService {
   }> {
     try {
       logger.log(`🧪 [CONTRACT] Testing upload of single brand: ${handle}`);
-      
+
       const config = getConfig();
 
       if (!process.env.ADMIN_PRIVATE_KEY) {
@@ -1258,17 +1287,19 @@ export class ContractUploadService {
       const testFid = 99999;
       const testWallet = this.DEFAULT_WALLET;
 
-      logger.log(`🧪 [CONTRACT] Attempting to upload: handle=${handle}, fid=${testFid}, wallet=${testWallet}`);
+      logger.log(
+        `🧪 [CONTRACT] Attempting to upload: handle=${handle}, fid=${testFid}, wallet=${testWallet}`,
+      );
 
       const hash = await walletClient.writeContract({
         address: contractAddress,
         abi: CONTRACT_ABI,
         functionName: 'batchCreateBrands',
         args: [
-          [handle], 
-          [testMetadataHash], 
-          [BigInt(testFid)], 
-          [testWallet as `0x${string}`]
+          [handle],
+          [testMetadataHash],
+          [BigInt(testFid)],
+          [testWallet as `0x${string}`],
         ],
       } as any);
 
@@ -1277,14 +1308,19 @@ export class ContractUploadService {
         hash,
       });
 
-      logger.log(`✅ [CONTRACT] Successfully uploaded test brand ${handle}: ${receipt.transactionHash}`);
+      logger.log(
+        `✅ [CONTRACT] Successfully uploaded test brand ${handle}: ${receipt.transactionHash}`,
+      );
 
       return {
         success: true,
         txHash: receipt.transactionHash,
       };
     } catch (error) {
-      logger.error(`❌ [CONTRACT] Failed to upload test brand ${handle}:`, error.message);
+      logger.error(
+        `❌ [CONTRACT] Failed to upload test brand ${handle}:`,
+        error.message,
+      );
       return {
         success: false,
         error: error.message,

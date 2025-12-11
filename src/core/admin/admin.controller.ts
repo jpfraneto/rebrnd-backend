@@ -561,17 +561,6 @@ export class AdminController {
   async uploadBrandsToContract(@Res() res: Response) {
     logger.log(`uploadBrandsToContract called - testing mode (no auth)`);
 
-    // TESTING: Admin check disabled
-    // if (!adminFids.includes(user.sub)) {
-    //   logger.log(`Access denied for user ${user.sub} - not in admin list`);
-    //   return hasError(
-    //     res,
-    //     HttpStatus.FORBIDDEN,
-    //     'uploadBrandsToContract',
-    //     'Admin access required',
-    //   );
-    // }
-
     try {
       logger.log('Starting brand upload to contract...');
 
@@ -608,6 +597,9 @@ export class AdminController {
       }
 
       logger.log('✅ Brand validation passed');
+
+      // Organize the brands array by their id in ascending order before proceeding
+      brands.sort((a, b) => a.id - b.id);
 
       // 3. Upload to contract in batches
       const result =
@@ -907,7 +899,9 @@ export class AdminController {
     try {
       console.log('🌳 [ADMIN] Starting airdrop snapshot generation...');
       console.log(`👤 [ADMIN] Triggered by admin FID: ${user.sub}`);
-      console.log('ℹ️ [ADMIN] Note: Token allocations are automatically calculated during daily score updates');
+      console.log(
+        'ℹ️ [ADMIN] Note: Token allocations are automatically calculated during daily score updates',
+      );
 
       const snapshot = await this.airdropService.generateAirdropSnapshot();
       console.log('✅ [ADMIN] Airdrop snapshot generated successfully!');
@@ -1190,12 +1184,15 @@ export class AdminController {
    */
   @Get('brands/sync-existing-from-contract')
   async syncExistingBrandsFromContract(@Res() res: Response) {
-    logger.log(`syncExistingBrandsFromContract called - testing mode (no auth)`);
+    logger.log(
+      `syncExistingBrandsFromContract called - testing mode (no auth)`,
+    );
 
     try {
       logger.log('Starting sync of existing brands from contract...');
 
-      const result = await this.contractUploadService.syncExistingBrandsFromContract();
+      const result =
+        await this.contractUploadService.syncExistingBrandsFromContract();
 
       return hasResponse(res, {
         success: true,
@@ -1229,8 +1226,11 @@ export class AdminController {
 
       // First sync existing brands from contract to avoid duplicates
       logger.log('Step 1: Syncing existing brands from contract...');
-      const syncResult = await this.contractUploadService.syncExistingBrandsFromContract();
-      logger.log(`Synced ${syncResult.markedAsUploaded} existing brands from contract`);
+      const syncResult =
+        await this.contractUploadService.syncExistingBrandsFromContract();
+      logger.log(
+        `Synced ${syncResult.markedAsUploaded} existing brands from contract`,
+      );
 
       // Then get remaining brands to upload
       logger.log('Step 2: Getting remaining brands to upload...');
@@ -1240,7 +1240,8 @@ export class AdminController {
       if (brands.length === 0) {
         return hasResponse(res, {
           success: true,
-          message: 'No remaining brands to upload - all brands are already on contract',
+          message:
+            'No remaining brands to upload - all brands are already on contract',
           summary: {
             syncedFromContract: syncResult.markedAsUploaded,
             remainingToUpload: 0,
@@ -1253,7 +1254,8 @@ export class AdminController {
       }
 
       // Validate the remaining brands
-      const validation = this.contractUploadService.validateBrandsForContract(brands);
+      const validation =
+        this.contractUploadService.validateBrandsForContract(brands);
       if (!validation.valid) {
         logger.error('Brand validation failed:', validation.issues);
         return hasError(
@@ -1268,7 +1270,10 @@ export class AdminController {
 
       // Upload remaining brands
       logger.log('Step 3: Uploading remaining brands...');
-      const result = await this.contractUploadService.uploadBrandsToContract(brands, false); // Don't reset flags
+      const result = await this.contractUploadService.uploadBrandsToContract(
+        brands,
+        false,
+      ); // Don't reset flags
 
       const summary = {
         syncedFromContract: syncResult.markedAsUploaded,
@@ -1284,7 +1289,8 @@ export class AdminController {
         logger.error('Some batches failed during retry upload:', result.errors);
       }
 
-      const success = result.successfulBrands > 0 || syncResult.markedAsUploaded > 0;
+      const success =
+        result.successfulBrands > 0 || syncResult.markedAsUploaded > 0;
       const message = success
         ? `Retry completed: Synced ${syncResult.markedAsUploaded} existing brands, uploaded ${result.successfulBrands}/${brands.length} remaining brands`
         : 'Retry failed: No brands were processed successfully';
@@ -1316,12 +1322,15 @@ export class AdminController {
     try {
       // Test the specific brands that are failing
       const testHandles = ['clanker', 'anon', 'juicebox', 'paybot', 'swapbot'];
-      
+
       const results = [];
-      
+
       for (const handle of testHandles) {
         try {
-          const exists = await this.contractUploadService.checkIfBrandExistsOnContract(handle);
+          const exists =
+            await this.contractUploadService.checkIfBrandExistsOnContract(
+              handle,
+            );
           results.push({ handle, exists, error: null });
         } catch (error) {
           results.push({ handle, exists: null, error: error.message });
@@ -1332,14 +1341,16 @@ export class AdminController {
       let contractBrandCount = null;
       let contractCountError = null;
       try {
-        contractBrandCount = await this.contractUploadService.getContractBrandCount();
+        contractBrandCount =
+          await this.contractUploadService.getContractBrandCount();
       } catch (error) {
         contractCountError = error.message;
       }
 
       // Get database counts
       const dbTotal = await this.contractUploadService.getDatabaseBrandCount();
-      const dbUploaded = await this.contractUploadService.getUploadedBrandCount();
+      const dbUploaded =
+        await this.contractUploadService.getUploadedBrandCount();
       const dbNotUploaded = dbTotal - dbUploaded;
 
       return hasResponse(res, {
@@ -1371,15 +1382,21 @@ export class AdminController {
    * Test uploading a single brand to isolate the issue
    */
   @Get('brands/test-single-upload/:handle')
-  async testSingleBrandUpload(@Param('handle') handle: string, @Res() res: Response) {
-    logger.log(`testSingleBrandUpload called for handle: ${handle} - testing mode (no auth)`);
+  async testSingleBrandUpload(
+    @Param('handle') handle: string,
+    @Res() res: Response,
+  ) {
+    logger.log(
+      `testSingleBrandUpload called for handle: ${handle} - testing mode (no auth)`,
+    );
 
     try {
-      const result = await this.contractUploadService.testUploadSingleBrand(handle);
+      const result =
+        await this.contractUploadService.testUploadSingleBrand(handle);
 
       return hasResponse(res, {
         success: result.success,
-        message: result.success 
+        message: result.success
           ? `Successfully uploaded test brand: ${handle}`
           : `Failed to upload test brand: ${handle}`,
         result,

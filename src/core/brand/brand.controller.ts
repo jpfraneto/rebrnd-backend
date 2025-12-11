@@ -29,6 +29,7 @@ import { HttpStatus, hasError, hasResponse } from '../../utils';
 // Security
 import { AuthorizationGuard, QuickAuthPayload } from '../../security/guards';
 import { Session } from '../../security/decorators';
+import { getConfig } from '../../security/config';
 import NeynarService from 'src/utils/neynar';
 
 export type BrandTimePeriod = 'week' | 'month' | 'all';
@@ -538,7 +539,10 @@ export class BrandController {
         }
 
         // All verifications passed - update vote and award points
-        await this.brandService.markVoteAsShared(vote.transactionHash, castHash);
+        await this.brandService.markVoteAsShared(
+          vote.transactionHash,
+          castHash,
+        );
         const updatedUser = await this.userService.addPoints(dbUser.id, 3);
 
         // Calculate day from vote date (using same calculation as contract: block.timestamp / 86400)
@@ -619,6 +623,55 @@ export class BrandController {
               }
             : null,
         });
+
+        // Reply to the cast telling the user their share was verified
+        try {
+          const pointsForVote = 6 + updatedUser.brndPowerLevel * 3;
+          const config = getConfig();
+          if (config.neynar.apiKey && config.neynar.signerUuid) {
+            const replyResponse = await fetch(
+              'https://api.neynar.com/v2/farcaster/cast',
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'x-api-key': config.neynar.apiKey,
+                },
+                body: JSON.stringify({
+                  signer_uuid: config.neynar.signerUuid,
+                  embeds: [{ url: 'https://rebrnd.lat' }],
+                  text: `Thank you for voting! @${castData.author.username} Your vote has been verified. You earned ${pointsForVote} points and now have a total of ${updatedUser.points} points. Claim your rewards here: `,
+                  parentCastId: {
+                    fid: castData.author.fid,
+                    hash: castHash,
+                  },
+                }),
+              },
+            );
+
+            if (replyResponse.ok) {
+              const replyData = await replyResponse.json();
+              console.log(
+                '✅ [VerifyShare] Successfully replied to cast:',
+                replyData.cast?.hash,
+              );
+            } else {
+              const errorText = await replyResponse.text();
+              console.error(
+                '❌ [VerifyShare] Failed to reply to cast:',
+                replyResponse.status,
+                errorText,
+              );
+            }
+          } else {
+            console.warn(
+              '⚠️ [VerifyShare] Neynar config missing, skipping cast reply',
+            );
+          }
+        } catch (replyError) {
+          console.error('❌ [VerifyShare] Error replying to cast:', replyError);
+          // Don't fail the request if reply fails
+        }
 
         return hasResponse(res, {
           ...responsePayload,
