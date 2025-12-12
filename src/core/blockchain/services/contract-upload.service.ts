@@ -15,6 +15,7 @@ import { base } from 'viem/chains';
 import { Brand } from '../../../models';
 import { getConfig } from '../../../security/config';
 import { logger } from '../../../main';
+import { IpfsService } from '../../../utils/ipfs.service';
 
 // Contract ABI for BRNDSEASON1
 const CONTRACT_ABI = [
@@ -696,6 +697,7 @@ export class ContractUploadService {
   constructor(
     @InjectRepository(Brand)
     private readonly brandRepository: Repository<Brand>,
+    private readonly ipfsService: IpfsService,
   ) {}
 
   async getAllBrandsForContract(limit?: number): Promise<ContractBrand[]> {
@@ -732,7 +734,10 @@ export class ContractUploadService {
       const contractBrands: ContractBrand[] = [];
       const seenHandles = new Set<string>();
 
-      brands.forEach((brand, index) => {
+      // Process brands sequentially to handle async metadata hash generation
+      for (let index = 0; index < brands.length; index++) {
+        const brand = brands[index];
+
         // Use existing handle or name as fallback
         const handle =
           brand.onChainHandle ||
@@ -744,13 +749,58 @@ export class ContractUploadService {
           logger.warn(
             `⚠️  [CONTRACT] Skipping duplicate handle "${handle}" (DB ID: ${brand.id})`,
           );
-          return;
+          continue;
         }
         seenHandles.add(handleLower);
 
-        // Generate metadata hash if missing
-        const metadataHash =
-          brand.metadataHash || this.generateMetadataHash(brand.name, index);
+        // Generate metadata hash if missing (upload to IPFS)
+        let metadataHash = brand.metadataHash;
+        if (!metadataHash) {
+          try {
+            // Load full brand data with relations for metadata generation
+            const fullBrand = await this.brandRepository.findOne({
+              where: { id: brand.id },
+              relations: ['category'],
+            });
+
+            if (!fullBrand) {
+              throw new Error(`Brand with ID ${brand.id} not found`);
+            }
+
+            metadataHash = await this.generateMetadataHash(fullBrand, index);
+            logger.log(
+              `📤 [IPFS] Uploaded metadata for brand "${brand.name}" (ID: ${brand.id}): ${metadataHash}`,
+            );
+          } catch (error) {
+            logger.error(
+              `❌ [IPFS] Failed to upload metadata for brand "${brand.name}" (ID: ${brand.id}):`,
+              error.message,
+            );
+            // Fallback to generating a hash locally if IPFS upload fails
+            // Load minimal brand data for fallback hash
+            const minimalBrand = await this.brandRepository.findOne({
+              where: { id: brand.id },
+              relations: ['category'],
+            });
+            if (minimalBrand) {
+              metadataHash = this.generateLocalMetadataHash(
+                minimalBrand,
+                index,
+              );
+              logger.warn(
+                `⚠️  [IPFS] Using local hash fallback for brand "${brand.name}": ${metadataHash}`,
+              );
+            } else {
+              // Last resort: use brand name and index
+              metadataHash = keccak256(
+                stringToBytes(JSON.stringify({ name: brand.name, index })),
+              );
+              logger.error(
+                `❌ [IPFS] Could not load brand data, using minimal hash for "${brand.name}": ${metadataHash}`,
+              );
+            }
+          }
+        }
 
         // Use existing FID or generate placeholder
         const fid = brand.onChainFid || 10000 + index; // Start at 10000 for placeholder FIDs
@@ -765,7 +815,7 @@ export class ContractUploadService {
           fid,
           walletAddress,
         });
-      });
+      }
 
       logger.log(
         `✅ [CONTRACT] Transformed ${contractBrands.length} unique brands for contract (removed ${brands.length - contractBrands.length} duplicates)`,
@@ -895,8 +945,8 @@ export class ContractUploadService {
         throw new Error('ADMIN_PRIVATE_KEY environment variable not set');
       }
 
-      if (!process.env.BRND_SEASON_1_ADDRESS) {
-        throw new Error('BRND_SEASON_1_ADDRESS environment variable not set');
+      if (!process.env.BRND_SEASON_2_ADDRESS) {
+        throw new Error('BRND_SEASON_2_ADDRESS environment variable not set');
       }
 
       const privateKey = process.env.ADMIN_PRIVATE_KEY.startsWith('0x')
@@ -917,7 +967,7 @@ export class ContractUploadService {
       });
 
       const contractAddress = process.env
-        .BRND_SEASON_1_ADDRESS as `0x${string}`;
+        .BRND_SEASON_2_ADDRESS as `0x${string}`;
 
       // Reset upload flags for fresh contract deployment
       if (resetFlags) {
@@ -1055,8 +1105,8 @@ export class ContractUploadService {
 
       const config = getConfig();
 
-      if (!process.env.BRND_SEASON_1_ADDRESS) {
-        throw new Error('BRND_SEASON_1_ADDRESS environment variable not set');
+      if (!process.env.BRND_SEASON_2_ADDRESS) {
+        throw new Error('BRND_SEASON_2_ADDRESS environment variable not set');
       }
 
       const publicClient = createPublicClient({
@@ -1065,7 +1115,7 @@ export class ContractUploadService {
       });
 
       const contractAddress = process.env
-        .BRND_SEASON_1_ADDRESS as `0x${string}`;
+        .BRND_SEASON_2_ADDRESS as `0x${string}`;
 
       logger.log(
         `🔍 [CONTRACT] Calling handleExists("${handle}") on contract ${contractAddress}`,
@@ -1095,8 +1145,8 @@ export class ContractUploadService {
     try {
       const config = getConfig();
 
-      if (!process.env.BRND_SEASON_1_ADDRESS) {
-        throw new Error('BRND_SEASON_1_ADDRESS environment variable not set');
+      if (!process.env.BRND_SEASON_2_ADDRESS) {
+        throw new Error('BRND_SEASON_2_ADDRESS environment variable not set');
       }
 
       const publicClient = createPublicClient({
@@ -1105,7 +1155,7 @@ export class ContractUploadService {
       });
 
       const contractAddress = process.env
-        .BRND_SEASON_1_ADDRESS as `0x${string}`;
+        .BRND_SEASON_2_ADDRESS as `0x${string}`;
 
       // Since _brandIdCounter is private in V5, we'll count by checking existing brands
       // Try to get brands starting from ID 1 until we hit an error (brand doesn't exist)
@@ -1258,8 +1308,8 @@ export class ContractUploadService {
         throw new Error('ADMIN_PRIVATE_KEY environment variable not set');
       }
 
-      if (!process.env.BRND_SEASON_1_ADDRESS) {
-        throw new Error('BRND_SEASON_1_ADDRESS environment variable not set');
+      if (!process.env.BRND_SEASON_2_ADDRESS) {
+        throw new Error('BRND_SEASON_2_ADDRESS environment variable not set');
       }
 
       const privateKey = process.env.ADMIN_PRIVATE_KEY.startsWith('0x')
@@ -1280,10 +1330,19 @@ export class ContractUploadService {
       });
 
       const contractAddress = process.env
-        .BRND_SEASON_1_ADDRESS as `0x${string}`;
+        .BRND_SEASON_2_ADDRESS as `0x${string}`;
+
+      const brand = await this.brandRepository.findOne({
+        where: { onChainHandle: handle },
+        relations: ['category'],
+      });
+
+      if (!brand) {
+        throw new Error(`Brand with handle "${handle}" not found`);
+      }
 
       // Test individual brand upload
-      const testMetadataHash = this.generateMetadataHash(handle, 999);
+      const testMetadataHash = await this.generateMetadataHash(brand, 999);
       const testFid = 99999;
       const testWallet = this.DEFAULT_WALLET;
 
@@ -1328,14 +1387,59 @@ export class ContractUploadService {
     }
   }
 
-  private generateMetadataHash(brandName: string, index: number): string {
+  /**
+   * Uploads brand metadata to IPFS using Pinata and returns the IPFS hash
+   * Uses the same format as NFT metadata uploads
+   */
+  private async generateMetadataHash(
+    brand: Brand,
+    index: number,
+  ): Promise<string> {
+    // Create metadata object in the same format as NFT metadata
+    const metadata = {
+      name: brand.name,
+      url: brand.url || '',
+      warpcastUrl: brand.warpcastUrl || '',
+      description: brand.description || '',
+      categoryId: brand.category?.id || null,
+      followerCount: brand.followerCount || 0,
+      imageUrl: brand.imageUrl || '',
+      profile: brand.profile || '',
+      channel: brand.channel || '',
+      queryType: brand.queryType ?? null,
+      channelOrProfile: brand.queryType === 0 ? 'channel' : 'profile',
+      founderFid: brand.founderFid || null,
+      ticker: brand.ticker || null,
+      contractAddress: brand.contractAddress || null,
+      createdAt: brand.createdAt?.toISOString() || new Date().toISOString(),
+    };
+
+    // Upload to IPFS using Pinata
+    const ipfsHash = await this.ipfsService.uploadJsonToIpfs(metadata);
+
+    logger.log(
+      `✅ [IPFS] Successfully uploaded metadata for brand "${brand.name}" to IPFS: ${ipfsHash}`,
+    );
+
+    return ipfsHash;
+  }
+
+  /**
+   * Fallback method to generate a local hash if IPFS upload fails
+   * This maintains backward compatibility
+   */
+  private generateLocalMetadataHash(brand: Brand, index: number): string {
     // Generate a simple metadata hash based on brand name and index
     const metadata = JSON.stringify({
-      name: brandName,
-      description: `Metadata for ${brandName}`,
-      index,
-      generated: true,
-      timestamp: Date.now(),
+      name: brand.name,
+      url: brand.url,
+      category: brand.category,
+      profile: brand.profile,
+      channel: brand.channel,
+      description: brand.description,
+      founder: brand.founderFid,
+      ticker: brand.ticker,
+      contract_address: brand.contractAddress,
     });
 
     return keccak256(stringToBytes(metadata));

@@ -8,8 +8,8 @@ import { User } from '../../../models';
 import { getConfig } from '../../../security/config';
 import { logger } from '../../../main';
 
-// Contract ABI for BrndSeason1
-const BRND_SEASON_1_ABI = [
+// Contract ABI for BrndSeason2
+const BRND_SEASON_2_ABI = [
   {
     inputs: [
       { internalType: 'address', name: '_brndToken', type: 'address' },
@@ -497,7 +497,7 @@ const BRND_SEASON_1_ABI = [
           { internalType: 'string', name: 'metadataHash', type: 'string' },
           { internalType: 'uint256', name: 'createdAt', type: 'uint256' },
         ],
-        internalType: 'struct BRNDSeason1.Brand',
+        internalType: 'struct BRNDSeason2.Brand',
         name: '',
         type: 'tuple',
       },
@@ -526,7 +526,7 @@ const BRND_SEASON_1_ABI = [
     inputs: [{ internalType: 'uint8', name: 'brndPowerLevel', type: 'uint8' }],
     name: 'getRewardAmount',
     outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
-    stateMutability: 'pure',
+    stateMutability: 'view',
     type: 'function',
   },
   {
@@ -642,6 +642,15 @@ const BRND_SEASON_1_ABI = [
       { internalType: 'address', name: 'newWalletAddress', type: 'address' },
     ],
     name: 'updateBrand',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [
+      { internalType: 'uint256', name: 'newMultiplier', type: 'uint256' },
+    ],
+    name: 'updateRewardMultiplier',
     outputs: [],
     stateMutability: 'nonpayable',
     type: 'function',
@@ -996,10 +1005,10 @@ export class BlockchainService {
         `📋 [BLOCKCHAIN] Getting user info from V5 contract for FID: ${fid}`,
       );
 
-      const CONTRACT_ADDRESS = process.env.BRND_SEASON_1_ADDRESS;
+      const CONTRACT_ADDRESS = process.env.BRND_SEASON_2_ADDRESS;
 
       if (!CONTRACT_ADDRESS) {
-        throw new Error('BRND_SEASON_1_ADDRESS environment variable not set');
+        throw new Error('BRND_SEASON_2_ADDRESS environment variable not set');
       }
 
       const publicClient = this.getPublicClient();
@@ -1007,7 +1016,7 @@ export class BlockchainService {
       // Call getUserInfo(uint256 fid) using viem
       const result = (await publicClient.readContract({
         address: CONTRACT_ADDRESS as Address,
-        abi: BRND_SEASON_1_ABI,
+        abi: BRND_SEASON_2_ABI,
         functionName: 'getUserInfo',
         args: [BigInt(fid)],
       } as any)) as [bigint, number, number, bigint];
@@ -1049,7 +1058,7 @@ export class BlockchainService {
 
   async getUserWalletsFromContract(fid: number): Promise<string[]> {
     try {
-      const CONTRACT_ADDRESS = process.env.BRND_SEASON_1_ADDRESS;
+      const CONTRACT_ADDRESS = process.env.BRND_SEASON_2_ADDRESS;
 
       if (!CONTRACT_ADDRESS) {
         return [];
@@ -1060,7 +1069,7 @@ export class BlockchainService {
       // Call getUserWallets(uint256 fid) using viem
       const wallets = (await publicClient.readContract({
         address: CONTRACT_ADDRESS as Address,
-        abi: BRND_SEASON_1_ABI,
+        abi: BRND_SEASON_2_ABI,
         functionName: 'getUserWallets',
         args: [BigInt(fid)],
       } as any)) as Address[];
@@ -1097,7 +1106,7 @@ export class BlockchainService {
       // Call getBrand(uint16 brandId) using viem
       const result = (await publicClient.readContract({
         address: CONTRACT_ADDRESS as Address,
-        abi: BRND_SEASON_1_ABI,
+        abi: BRND_SEASON_2_ABI,
         functionName: 'getBrand',
         args: [brandId],
       } as any)) as {

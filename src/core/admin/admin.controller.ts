@@ -600,6 +600,25 @@ export class AdminController {
 
       // Organize the brands array by their id in ascending order before proceeding
       brands.sort((a, b) => a.id - b.id);
+      console.log('*************************************************');
+      console.log('*************************************************');
+      console.log('*************************************************');
+      console.log('*************************************************');
+      console.log('*************************************************');
+      console.log('IN HERE, THE BRANDS SORTED ARE:', brands);
+      console.log('*************************************************');
+      console.log('*************************************************');
+      console.log('*************************************************');
+      console.log('*************************************************');
+      console.log(
+        '***********************we will return now**************************',
+      );
+      console.log('*************************************************');
+
+      return hasResponse(res, {
+        message: `forced return because of testing. There are ${brands.length} brands to upload, and the number 222 is ${brands[222].id}, ${brands[222].handle}, ${brands[222].fid}, ${brands[222].walletAddress}, ${brands[222].metadataHash}`,
+        brands,
+      });
 
       // 3. Upload to contract in batches
       const result =

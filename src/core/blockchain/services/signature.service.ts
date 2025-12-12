@@ -17,8 +17,8 @@ import { logger } from '../../../main';
 
 @Injectable()
 export class SignatureService {
-  private readonly CONTRACT_ADDRESS = process.env.BRND_SEASON_1_ADDRESS;
-  private readonly DOMAIN_NAME = 'BRNDSEASON1';
+  private readonly CONTRACT_ADDRESS = process.env.BRND_SEASON_2_ADDRESS;
+  private readonly DOMAIN_NAME = 'BRNDSEASON2';
   private readonly DOMAIN_VERSION = '1';
   private readonly CHAIN_ID = 8453; // Base mainnet
 
@@ -318,7 +318,7 @@ export class SignatureService {
     });
 
     const domain = {
-      name: 'BRNDSEASON1',
+      name: 'BRNDSEASON2',
       version: '1',
       chainId: 8453,
       verifyingContract: this.CONTRACT_ADDRESS as `0x${string}`,

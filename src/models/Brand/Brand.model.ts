@@ -12,7 +12,6 @@ import {
   Unique,
 } from 'typeorm';
 
-
 /**
  * @class Brand
  * @classdesc Brand class represents a brand in the system.
@@ -152,4 +151,13 @@ export class Brand {
 
   @OneToMany('BrandTags', 'brand')
   brandTags: any[];
+
+  @Column({ nullable: true })
+  founderFid: number;
+
+  @Column({ nullable: true })
+  ticker: string;
+
+  @Column({ nullable: true })
+  contractAddress: string;
 }

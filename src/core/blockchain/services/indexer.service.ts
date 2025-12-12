@@ -169,7 +169,39 @@ export class IndexerService {
 
       // Calculate day from timestamp (block.timestamp / 86400)
       const day = Math.floor(timestamp / 86400);
-
+      // Calculate brndPaid right away based on user's brndPowerLevel
+      let brndPaid: number;
+      switch (user.brndPowerLevel) {
+        case 0:
+          brndPaid = 100;
+          break;
+        case 1:
+          brndPaid = 150;
+          break;
+        case 2:
+          brndPaid = 200;
+          break;
+        case 3:
+          brndPaid = 300;
+          break;
+        case 4:
+          brndPaid = 400;
+          break;
+        case 5:
+          brndPaid = 500;
+          break;
+        case 6:
+          brndPaid = 600;
+          break;
+        case 7:
+          brndPaid = 700;
+          break;
+        case 8:
+          brndPaid = 800;
+          break;
+        default:
+          brndPaid = 0;
+      }
       // Create the vote record (let TypeORM generate the UUID)
       const vote = this.userBrandVotesRepository.create({
         // Don't set id - let TypeORM generate UUID
@@ -181,19 +213,8 @@ export class IndexerService {
         shared: false, // Will be updated if user shares their vote
         castHash: null, // Keep null for now, will be populated when user shares
         transactionHash: voteData.transactionHash, // Store blockchain transaction hash
-        brndPaidWhenCreatingPodium: (() => {
-          // Level 0: 1000, Level 1: 1500, Level 2: 2000, Level 3: 3000, etc.
-          if (user.brndPowerLevel === 0) return 1000;
-          if (user.brndPowerLevel === 1) return 1500;
-          if (user.brndPowerLevel === 2) return 2000;
-          if (user.brndPowerLevel === 3) return 3000;
-          if (user.brndPowerLevel === 4) return 4000;
-          if (user.brndPowerLevel === 5) return 5000;
-          if (user.brndPowerLevel === 6) return 6000;
-          if (user.brndPowerLevel === 7) return 7000;
-          if (user.brndPowerLevel === 8) return 8000;
-        })(),
-        rewardAmount: rewardAmount, // Store reward amount (cost * 10)
+        brndPaidWhenCreatingPodium: brndPaid,
+        rewardAmount: (brndPaid * 10).toString(), // Store reward amount (cost * 10)
         day: day, // Store blockchain day
         shareVerified: false, // Will be updated when user shares
       });
