@@ -36,6 +36,9 @@ export class UserBrandVotes {
   @Column({ nullable: true })
   castHash: string;
 
+  @Column({ nullable: true })
+  brndPaidWhenCreatingPodium: number;
+
   // Reward claim fields
   @Column({ type: 'decimal', precision: 64, scale: 18, nullable: true })
   rewardAmount: string;

@@ -6,6 +6,7 @@ import { Brand, User, UserBrandVotes } from '../../../models';
 import { UserService } from '../../user/services';
 import { BrandService } from '../../brand/services';
 import { logger } from '../../../main';
+import { getConfig } from '../../../security/config';
 import {
   SubmitVoteDto,
   SubmitBrandDto,
@@ -55,24 +56,45 @@ export class IndexerService {
       let user = await this.userService.getByFid(voteData.fid);
       if (!user) {
         logger.log(
-          `👤 [INDEXER] User with FID ${voteData.fid} not found, creating placeholder`,
+          `👤 [INDEXER] User with FID ${voteData.fid} not found, fetching from Neynar`,
         );
-        // Create a placeholder user for the vote
-        // Note: This user should be properly populated when they first log in
+
+        // Fetch user info from Neynar API
+        const neynarUserInfo = await this.getNeynarUserInfo(voteData.fid);
+
+        // Extract user data from Neynar response
+        const username = neynarUserInfo?.username || `user_${voteData.fid}`;
+        const photoUrl = neynarUserInfo?.pfp_url || '';
+        const neynarScore =
+          neynarUserInfo?.score ||
+          neynarUserInfo?.experimental?.neynar_user_score ||
+          0.0;
+        const verified =
+          neynarUserInfo?.verified_addresses?.eth_addresses?.length > 0 ||
+          false;
+
+        // Use verified address from Neynar if available, otherwise use voter address
+        const address =
+          neynarUserInfo?.verified_addresses?.primary?.eth_address ||
+          neynarUserInfo?.verified_addresses?.eth_addresses?.[0] ||
+          voteData.voter;
+
         user = await this.userRepository.save({
           fid: voteData.fid,
-          username: `user_${voteData.fid}`, // Placeholder username
-          photoUrl: '', // Will be populated on first login
-          address: voteData.voter,
+          username,
+          photoUrl,
+          address,
           banned: false,
           powerups: 0,
           points: 0,
-          verified: false,
-          neynarScore: 0.0,
+          verified,
+          neynarScore,
           createdAt: voteDate,
           updatedAt: voteDate,
         });
-        logger.log(`✅ [INDEXER] Created placeholder user: ${user.id}`);
+        logger.log(
+          `✅ [INDEXER] Created user from Neynar data: ${user.id} (username: ${username})`,
+        );
       }
 
       // Verify brands exist
@@ -159,6 +181,18 @@ export class IndexerService {
         shared: false, // Will be updated if user shares their vote
         castHash: null, // Keep null for now, will be populated when user shares
         transactionHash: voteData.transactionHash, // Store blockchain transaction hash
+        brndPaidWhenCreatingPodium: (() => {
+          // Level 0: 1000, Level 1: 1500, Level 2: 2000, Level 3: 3000, etc.
+          if (user.brndPowerLevel === 0) return 1000;
+          if (user.brndPowerLevel === 1) return 1500;
+          if (user.brndPowerLevel === 2) return 2000;
+          if (user.brndPowerLevel === 3) return 3000;
+          if (user.brndPowerLevel === 4) return 4000;
+          if (user.brndPowerLevel === 5) return 5000;
+          if (user.brndPowerLevel === 6) return 6000;
+          if (user.brndPowerLevel === 7) return 7000;
+          if (user.brndPowerLevel === 8) return 8000;
+        })(),
         rewardAmount: rewardAmount, // Store reward amount (cost * 10)
         day: day, // Store blockchain day
         shareVerified: false, // Will be updated when user shares
@@ -172,64 +206,17 @@ export class IndexerService {
         this.brandRepository.increment(
           { id: voteData.brandIds[0] },
           'score',
-          60,
+          0.6 * vote.brndPaidWhenCreatingPodium,
         ),
-        this.brandRepository.increment(
-          { id: voteData.brandIds[0] },
-          'scoreWeek',
-          60,
-        ),
-        this.brandRepository.increment(
-          { id: voteData.brandIds[0] },
-          'scoreMonth',
-          60,
-        ),
-        this.brandRepository.increment(
-          { id: voteData.brandIds[0] },
-          'stateScore',
-          60,
-        ),
-
         this.brandRepository.increment(
           { id: voteData.brandIds[1] },
           'score',
-          30,
+          0.3 * vote.brndPaidWhenCreatingPodium,
         ),
-        this.brandRepository.increment(
-          { id: voteData.brandIds[1] },
-          'scoreWeek',
-          30,
-        ),
-        this.brandRepository.increment(
-          { id: voteData.brandIds[1] },
-          'scoreMonth',
-          30,
-        ),
-        this.brandRepository.increment(
-          { id: voteData.brandIds[1] },
-          'stateScore',
-          30,
-        ),
-
         this.brandRepository.increment(
           { id: voteData.brandIds[2] },
           'score',
-          10,
-        ),
-        this.brandRepository.increment(
-          { id: voteData.brandIds[2] },
-          'scoreWeek',
-          10,
-        ),
-        this.brandRepository.increment(
-          { id: voteData.brandIds[2] },
-          'scoreMonth',
-          10,
-        ),
-        this.brandRepository.increment(
-          { id: voteData.brandIds[2] },
-          'stateScore',
-          10,
+          0.1 * vote.brndPaidWhenCreatingPodium,
         ),
       ]);
 
@@ -444,21 +431,45 @@ export class IndexerService {
         let user = await this.userService.getByFid(claimData.fid);
         if (!user) {
           logger.log(
-            `👤 [INDEXER] User with FID ${claimData.fid} not found, creating placeholder`,
+            `👤 [INDEXER] User with FID ${claimData.fid} not found, fetching from Neynar`,
           );
+
+          // Fetch user info from Neynar API
+          const neynarUserInfo = await this.getNeynarUserInfo(claimData.fid);
+
+          // Extract user data from Neynar response
+          const username = neynarUserInfo?.username || `user_${claimData.fid}`;
+          const photoUrl = neynarUserInfo?.pfp_url || '';
+          const neynarScore =
+            neynarUserInfo?.score ||
+            neynarUserInfo?.experimental?.neynar_user_score ||
+            0.0;
+          const verified =
+            neynarUserInfo?.verified_addresses?.eth_addresses?.length > 0 ||
+            false;
+
+          // Use verified address from Neynar if available, otherwise use recipient address
+          const address =
+            neynarUserInfo?.verified_addresses?.primary?.eth_address ||
+            neynarUserInfo?.verified_addresses?.eth_addresses?.[0] ||
+            claimData.recipient;
+
           user = await this.userRepository.save({
             fid: claimData.fid,
-            username: `user_${claimData.fid}`,
-            photoUrl: '',
-            address: claimData.recipient,
+            username,
+            photoUrl,
+            address,
             banned: false,
             powerups: 0,
             points: 0,
-            verified: false,
-            neynarScore: 0.0,
+            verified,
+            neynarScore,
             createdAt: claimDate,
             updatedAt: claimDate,
           });
+          logger.log(
+            `✅ [INDEXER] Created user from Neynar data: ${user.id} (username: ${username})`,
+          );
         }
 
         // Create placeholder vote record with claim data
@@ -523,23 +534,46 @@ export class IndexerService {
       let user = await this.userService.getByFid(levelUpData.fid);
       if (!user) {
         logger.log(
-          `👤 [INDEXER] User with FID ${levelUpData.fid} not found, creating placeholder`,
+          `👤 [INDEXER] User with FID ${levelUpData.fid} not found, fetching from Neynar`,
         );
+
+        // Fetch user info from Neynar API
+        const neynarUserInfo = await this.getNeynarUserInfo(levelUpData.fid);
+
+        // Extract user data from Neynar response
+        const username = neynarUserInfo?.username || `user_${levelUpData.fid}`;
+        const photoUrl = neynarUserInfo?.pfp_url || '';
+        const neynarScore =
+          neynarUserInfo?.score ||
+          neynarUserInfo?.experimental?.neynar_user_score ||
+          0.0;
+        const verified =
+          neynarUserInfo?.verified_addresses?.eth_addresses?.length > 0 ||
+          false;
+
+        // Use verified address from Neynar if available, otherwise use wallet address
+        const address =
+          neynarUserInfo?.verified_addresses?.primary?.eth_address ||
+          neynarUserInfo?.verified_addresses?.eth_addresses?.[0] ||
+          levelUpData.wallet;
+
         user = await this.userRepository.save({
           fid: levelUpData.fid,
-          username: `user_${levelUpData.fid}`,
-          photoUrl: '',
-          address: levelUpData.wallet,
+          username,
+          photoUrl,
+          address,
           banned: false,
           powerups: 0,
           points: 0,
-          verified: false,
+          verified,
           brndPowerLevel: levelUpData.brndPowerLevel,
-          neynarScore: 0.0,
+          neynarScore,
           createdAt: levelUpDate,
           updatedAt: levelUpDate,
         });
-        logger.log(`✅ [INDEXER] Created placeholder user: ${user.id}`);
+        logger.log(
+          `✅ [INDEXER] Created user from Neynar data: ${user.id} (username: ${username})`,
+        );
       } else {
         // Update existing user's power level and wallet address
         logger.log(
@@ -565,6 +599,53 @@ export class IndexerService {
         error,
       );
       throw error;
+    }
+  }
+
+  /**
+   * Fetches user info from Neynar API
+   */
+  private async getNeynarUserInfo(fid: number): Promise<any> {
+    try {
+      logger.log(`🔍 [INDEXER] Fetching user info from Neynar for FID: ${fid}`);
+      const apiKey = getConfig().neynar.apiKey.replace(/&$/, '');
+
+      const response = await fetch(
+        `https://api.neynar.com/v2/farcaster/user/bulk?fids=${fid}`,
+        {
+          headers: {
+            accept: 'application/json',
+            api_key: apiKey,
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Neynar API error: ${response.status} ${response.statusText}`,
+        );
+      }
+
+      const data = await response.json();
+      const userInfo = data?.users?.[0] || null;
+
+      if (userInfo) {
+        logger.log(
+          `✅ [INDEXER] Successfully fetched Neynar user info for FID: ${fid}`,
+        );
+      } else {
+        logger.warn(
+          `⚠️ [INDEXER] No user info found in Neynar response for FID: ${fid}`,
+        );
+      }
+
+      return userInfo;
+    } catch (error) {
+      logger.error(
+        `❌ [INDEXER] Error fetching Neynar user info for FID ${fid}:`,
+        error,
+      );
+      return null;
     }
   }
 }

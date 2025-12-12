@@ -639,12 +639,9 @@ export class BrandController {
                 },
                 body: JSON.stringify({
                   signer_uuid: config.neynar.signerUuid,
-                  embeds: [{ url: 'https://rebrnd.lat' }],
-                  text: `Thank you for voting! @${castData.author.username} Your vote has been verified. You earned ${pointsForVote} points and now have a total of ${updatedUser.points} points. Claim your rewards here: `,
-                  parentCastId: {
-                    fid: castData.author.fid,
-                    hash: castHash,
-                  },
+                  embeds: [{ cast_id: { hash: castHash } }],
+
+                  text: `Thank you for voting @${castData.author.username}. Your vote has been verified. You earned ${pointsForVote} points and now have a total of ${updatedUser.points} points.\n\nYou can now claim ${vote.brndPaidWhenCreatingPodium * 10} $BRND on the miniapp.`,
                 }),
               },
             );
@@ -1194,44 +1191,8 @@ export class BrandController {
         limit,
       );
 
-      // Format the response to match frontend expectations
-      const formattedPodiums = podiums.map((vote) => ({
-        transactionHash: vote.transactionHash,
-        date: vote.date,
-        createdAt: vote.date,
-        user: {
-          fid: vote.user.fid,
-          username: vote.user.username,
-          photoUrl: vote.user.photoUrl,
-        },
-        brands: [
-          {
-            id: vote.brand1.id,
-            name: vote.brand1.name,
-            imageUrl: vote.brand1.imageUrl,
-            score: vote.brand1.score,
-            ranking: vote.brand1.ranking,
-          },
-          {
-            id: vote.brand2.id,
-            name: vote.brand2.name,
-            imageUrl: vote.brand2.imageUrl,
-            score: vote.brand2.score,
-            ranking: vote.brand2.ranking,
-          },
-          {
-            id: vote.brand3.id,
-            name: vote.brand3.name,
-            imageUrl: vote.brand3.imageUrl,
-            score: vote.brand3.score,
-            ranking: vote.brand3.ranking,
-          },
-        ],
-        pointsAwarded: 100, // Total points (60 + 30 + 10)
-      }));
-
       return hasResponse(res, {
-        podiums: formattedPodiums,
+        podiums: podiums,
         pagination: {
           page,
           limit,
