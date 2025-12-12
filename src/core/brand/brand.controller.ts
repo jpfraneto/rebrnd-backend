@@ -639,7 +639,9 @@ export class BrandController {
                 },
                 body: JSON.stringify({
                   signer_uuid: config.neynar.signerUuid,
-                  embeds: [{ cast_id: { hash: castHash } }],
+                  embeds: [
+                    { cast_id: { hash: castHash, fid: castData.author.fid } },
+                  ],
 
                   text: `Thank you for voting @${castData.author.username}. Your vote has been verified. You earned ${pointsForVote} points and now have a total of ${updatedUser.points} points.\n\nYou can now claim ${vote.brndPaidWhenCreatingPodium * 10} $BRND on the miniapp.`,
                 }),
